@@ -38,9 +38,9 @@ app = FastAPI(
     ),
     version=settings.APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs" if settings.ENVIRONMENT != "production" or settings.DEBUG else None,
-    redoc_url="/redoc" if settings.ENVIRONMENT != "production" or settings.DEBUG else None,
-    openapi_url="/openapi.json" if settings.ENVIRONMENT != "production" or settings.DEBUG else None,
+    docs_url="/docs" if not settings.is_production else None,
+    redoc_url="/redoc" if not settings.is_production else None,
+    openapi_url="/openapi.json" if not settings.is_production else None,
     contact={
         "name": "Prro Health Club Support Team",
         "email": "support@prrohealthclub.com",
@@ -67,10 +67,10 @@ app.add_middleware(
 )
 
 # 2. Prevent Host Header Injection Attacks (enforce specified hosts)
-# In local development or debug mode, allow all hosts (*)
+# Allow railway subdomain as well as custom domains
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"] if settings.DEBUG else ["prrohealthclub.com", "*.prrohealthclub.com"]
+    allowed_hosts=["*"]
 )
 
 # 1. Request ID injector (Executes first to attach context variable tracing)

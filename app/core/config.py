@@ -27,8 +27,16 @@ class Settings(BaseSettings):
     # CORS Settings
     CORS_ORIGINS: str = "*"
 
-    #Timezone
+    # Timezone
     TIMEZONE: str = "Asia/Kolkata"
+
+    # Server configuration
+    PORT: int = 8000
+    WORKERS: int = 2
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT == "production"
 
     @property
     def cors_origins_list(self) -> List[str]:
