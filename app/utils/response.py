@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from app.middleware.request_context import request_id_var
 
 
@@ -17,8 +18,8 @@ def success_response(
     content = {
         "success": True,
         "message": message,
-        "data": data if data is not None else {},
-        "meta": meta if meta is not None else {}
+        "data": jsonable_encoder(data) if data is not None else {},
+        "meta": jsonable_encoder(meta) if meta is not None else {}
     }
     return JSONResponse(status_code=status_code, content=content)
 
@@ -36,7 +37,7 @@ def error_response(
         "error": {
             "code": code,
             "message": message,
-            "details": details if details is not None else {}
+            "details": jsonable_encoder(details) if details is not None else {}
         },
         "request_id": resolved_request_id,
         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -55,7 +56,7 @@ def paginated_response(
     content = {
         "success": True,
         "message": message,
-        "data": data,
+        "data": jsonable_encoder(data),
         "meta": {
             "page": page,
             "limit": limit,
