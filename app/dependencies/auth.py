@@ -2,10 +2,10 @@ import uuid
 import calendar
 from dataclasses import dataclass
 from typing import List, Optional
-# pyrefly: ignore [missing-import]
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from loguru import logger
+import traceback
 from app.core.config import settings
 from app.core.exceptions import AuthenticationException, AuthorizationException
 from app.core.security import decode_token
@@ -34,6 +34,7 @@ class UserContext:
 
 
 def get_current_user_context(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
 ) -> UserContext:
     """
@@ -43,21 +44,34 @@ def get_current_user_context(
     Reads: Authorization: Bearer <token>
     This is the SINGLE place that validates JWTs. All 401 decisions happen here.
     """
+    # [AUTH-01] Log raw Authorization header received
+    auth_header = request.headers.get("Authorization")
+    logger.info(f"[AUTH-01] Authorization header received: {auth_header}")
+
     if not credentials or not credentials.credentials:
+        logger.warning("[AUTH-01-FAIL] Authentication credentials were not provided in request headers")
         raise AuthenticationException(message="Authentication credentials were not provided")
 
     token = credentials.credentials
-    logger.debug(f"[AUTH] Validating token (first 20 chars): {token[:20]}...")
+    # [AUTH-02] Token extracted successfully
+    logger.info(f"[AUTH-02] Token extracted successfully (first 20 chars): {token[:20]}...")
 
-    payload = decode_token(token)
+    # [AUTH-03] JWT decode attempt
+    try:
+        payload = decode_token(token)
+    except Exception as e:
+        logger.error(f"[AUTH-03-FAIL] JWT decode exception of type {type(e).__name__}: {str(e)}\n{traceback.format_exc()}")
+        raise AuthenticationException(message="Invalid or expired authentication credentials")
 
     if not payload:
-        # decode_token already logged the exact PyJWT exception
+        logger.warning("[AUTH-03-FAIL] JWT decode returned empty payload (invalid signature, expired, or malformed)")
         raise AuthenticationException(message="Invalid or expired authentication credentials")
+
+    logger.info(f"[AUTH-03] JWT decoded successfully. Payload: {payload}")
 
     token_type = payload.get("type")
     if token_type != "access":
-        logger.warning(f"[AUTH] Wrong token type presented: type={token_type!r}")
+        logger.warning(f"[AUTH-03-FAIL] Wrong token type presented: type={token_type!r}")
         raise AuthenticationException(message="Invalid or expired authentication credentials")
 
     user_id_str = payload.get("sub")
@@ -65,26 +79,26 @@ def get_current_user_context(
     gym_id_str = payload.get("gym_id")        # Optional — may be None
     branch_id_str = payload.get("branch_id") # Optional — may be None
 
-    logger.debug(
-        f"[AUTH] Token claims — sub={user_id_str!r} role={role!r} "
-        f"gym_id={gym_id_str!r} branch_id={branch_id_str!r}"
-    )
-
-    # Only sub and role are mandatory
+    # [AUTH-04] Required claims check
     if not user_id_str or not role:
         logger.warning(
-            f"[AUTH] Malformed token — missing required claims: "
+            f"[AUTH-04-FAIL] Malformed token — missing required claims: "
             f"sub={user_id_str!r} role={role!r}"
         )
         raise AuthenticationException(message="Token credentials are malformed")
+    
+    logger.info(f"[AUTH-04] Required claims present. sub={user_id_str}, role={role}")
 
+    # [AUTH-05] UUID parsing
     try:
         user_uuid = uuid.UUID(user_id_str)
-    except ValueError:
-        logger.warning(f"[AUTH] Invalid UUID in sub claim: {user_id_str!r}")
+        logger.info(f"[AUTH-05] UUID parsed successfully: {user_uuid}")
+    except ValueError as e:
+        logger.error(f"[AUTH-05-FAIL] Invalid UUID in sub claim: {user_id_str!r}. Exception: {e}")
         raise AuthenticationException(message="Token identifiers are malformed UUIDs")
 
-    # Verify token has not been revoked by a password change
+    # [AUTH-06] Database lookup and verification
+    logger.info(f"[AUTH-06] Looking up user in database: user_id={user_uuid}...")
     try:
         from app.database.session import SessionLocal
         from app.models.user import User
@@ -97,12 +111,14 @@ def get_current_user_context(
             ).first()
 
             if db_user is None:
-                logger.warning(f"[AUTH] User not found in DB: user_id={user_uuid}")
+                logger.warning(f"[AUTH-06-FAIL] User account not found in DB: user_id={user_uuid}")
                 raise AuthenticationException(message="User account not found or deactivated")
 
             if not db_user.is_active:
-                logger.warning(f"[AUTH] Inactive account attempted access: user_id={user_uuid}")
+                logger.warning(f"[AUTH-06-FAIL] Account is disabled: user_id={user_uuid}")
                 raise AuthenticationException(message="Account is disabled. Please contact support.")
+
+            logger.info(f"[AUTH-06] User found: id={db_user.id}, email={db_user.email}, active={db_user.is_active}")
 
             if db_user.last_password_changed_at and payload.get("iat"):
                 token_iat = payload.get("iat")
@@ -112,7 +128,7 @@ def get_current_user_context(
                     )
                     if token_iat <= user_change_ts:
                         logger.warning(
-                            f"[AUTH] Token revoked by password change: "
+                            f"[AUTH-06-FAIL] Token revoked by password change: "
                             f"user_id={user_uuid} token_iat={token_iat} changed_at={user_change_ts}"
                         )
                         raise AuthenticationException(message="Session revoked. Please login again.")
@@ -121,7 +137,7 @@ def get_current_user_context(
     except AuthenticationException:
         raise  # re-raise auth exceptions unchanged
     except Exception as e:
-        logger.error(f"[AUTH] DB verification error: {e}")
+        logger.error(f"[AUTH-06-FAIL] DB lookup exception of type {type(e).__name__}: {str(e)}\n{traceback.format_exc()}")
         raise AuthenticationException(message="Authentication verification failed")
 
     # Parse optional UUID fields
@@ -140,6 +156,8 @@ def get_current_user_context(
         except ValueError:
             logger.warning(f"[AUTH] Invalid branch_id UUID: {branch_id_str!r}")
 
+    # [AUTH-07] Returning UserContext
+    logger.info(f"[AUTH-07] Returning UserContext for user_id={user_uuid}, role={role}")
     return UserContext(
         user_id=user_uuid,
         role=role,
