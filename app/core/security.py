@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 import bcrypt
 import jwt
-from jwt.exceptions import PyJWTError
 from app.core.config import settings
 from loguru import logger
 
@@ -81,8 +80,9 @@ def create_refresh_token(
 
 def decode_token(token: str) -> Dict[str, Any]:
     """
-    Decode and validate a JWT token payload.
-    Returns empty dict if the token is expired or signature is invalid.
+    Decode and validate a JWT token.
+    Returns the payload dict on success, or empty dict on any failure.
+    Every failure is logged with the exact exception type and message.
     """
     try:
         payload = jwt.decode(
@@ -91,6 +91,21 @@ def decode_token(token: str) -> Dict[str, Any]:
             algorithms=[settings.ALGORITHM]
         )
         return payload
-    except PyJWTError as e:
-        logger.warning(f"Failed to decode JWT token: {str(e)}")
+    except jwt.exceptions.ExpiredSignatureError as e:
+        logger.warning(f"[JWT] Token expired: {e}")
+        return {}
+    except jwt.exceptions.InvalidSignatureError as e:
+        logger.error(f"[JWT] Invalid signature (wrong SECRET_KEY?): {e}")
+        return {}
+    except jwt.exceptions.DecodeError as e:
+        logger.error(f"[JWT] Token decode failed (malformed token): {e}")
+        return {}
+    except jwt.exceptions.InvalidAlgorithmError as e:
+        logger.error(f"[JWT] Algorithm mismatch (expected {settings.ALGORITHM}): {e}")
+        return {}
+    except jwt.exceptions.PyJWTError as e:
+        logger.error(f"[JWT] PyJWT error ({type(e).__name__}): {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"[JWT] Unexpected token decode error ({type(e).__name__}): {e}")
         return {}
