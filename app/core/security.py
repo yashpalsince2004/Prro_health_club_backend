@@ -50,6 +50,7 @@ def create_access_token(
         "gym_id": str(gym_id) if gym_id else None,
         "branch_id": str(branch_id) if branch_id else None,
         "exp": expire,
+        "iat": datetime.now(timezone.utc),
         "type": "access"
     }
     
@@ -71,6 +72,7 @@ def create_refresh_token(
     to_encode = {
         "sub": str(subject),
         "exp": expire,
+        "iat": datetime.now(timezone.utc),
         "type": "refresh"
     }
     

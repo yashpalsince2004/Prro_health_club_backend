@@ -12,6 +12,7 @@ from app.api.v1.workout_plans.endpoints import router as workout_plans_router
 from app.api.v1.diet_plans.endpoints import router as diet_plans_router
 from app.api.v1.analytics.endpoints import router as analytics_router
 from app.api.v1.notifications.endpoints import router as notifications_router
+from app.api.v1.admin.cron import router as admin_cron_router
 
 api_router = APIRouter()
 
@@ -29,3 +30,4 @@ api_router.include_router(workout_plans_router, prefix="/workout-plans", tags=["
 api_router.include_router(diet_plans_router, prefix="/diet-plans", tags=["Diet Plans"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["Notifications"])
+api_router.include_router(admin_cron_router, prefix="/admin", tags=["Admin Cron"])

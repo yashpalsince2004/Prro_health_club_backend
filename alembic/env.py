@@ -21,6 +21,14 @@ target_metadata = Base.metadata
 
 # Override the sqlalchemy.url option dynamically with settings.DATABASE_URL
 db_url = settings.DATABASE_URL
+if db_url and "pgbouncer=" in db_url:
+    from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+    parsed = urlparse(db_url)
+    query_params = parse_qs(parsed.query)
+    query_params.pop("pgbouncer", None)
+    new_query = urlencode(query_params, doseq=True)
+    db_url = urlunparse(parsed._replace(query=new_query))
+
 if not db_url:
     # Use SQLite memory database as a default migration target fallback if env is unset
     db_url = "sqlite:///:memory:"

@@ -66,6 +66,13 @@ class Payment(Base, UUIDMixin, AuditMixin):
         nullable=False,
         comment="Currency ISO code (default INR)"
     )
+    receipt_number: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        unique=True,
+        index=True,
+        comment="Sequential receipt number e.g. PRRO-2026-000001"
+    )
     payment_method: Mapped[PaymentMethodEnum] = mapped_column(
         sqlalchemy.Enum(PaymentMethodEnum, name="paymentmethod"),
         nullable=False,

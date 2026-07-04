@@ -124,25 +124,89 @@ class AuthService:
         return
 
     @staticmethod
-    def process_forgot_password(email: str) -> None:
+    def process_forgot_password(
+        email: str,
+        db: Session,
+        background_tasks: Any,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> None:
         """
         Process request for a forgotten password.
         Generates and dispatches a reset token to user's registered communication channels.
         """
-        user = MOCK_USERS.get(email.lower())
+        from app.models.user import User
+        from app.models.password_reset import PasswordResetToken
+        from app.services.email_service import send_password_reset_email
+        import secrets
+        from datetime import datetime, timedelta
+
+        user = db.query(User).filter(User.email == email.lower(), User.is_deleted == False).first()
         if not user:
             # Prevent user enumeration attacks by returning success even if email is not found
+            logger.info(f"Password reset requested for non-existent email: {email}")
             return
-        # Mock trigger for password reset email dispatch
-        return
+
+        # Invalidate all previous unused tokens for this user
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.is_used == False
+        ).update({"is_used": True})
+        db.flush()
+
+        # Generate a random hex token
+        token = secrets.token_hex(32)
+        expires_at = datetime.utcnow() + timedelta(minutes=settings.RESET_TOKEN_EXPIRY_MINUTES)
+
+        reset_record = PasswordResetToken(
+            user_id=user.id,
+            token=token,
+            expires_at=expires_at,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+        db.add(reset_record)
+        db.commit()
+
+        reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+        member_name = user.profile.full_name if user.profile else user.email
+
+        background_tasks.add_task(
+            send_password_reset_email,
+            user.email,
+            member_name,
+            reset_url
+        )
 
     @staticmethod
-    def process_reset_password(token: str, new_password: str) -> None:
+    def process_reset_password(token: str, new_password: str, db: Session) -> None:
         """
         Reset user password using a verified reset token.
         """
-        payload = decode_token(token)
-        if not payload or payload.get("type") != "reset":
-            raise AuthenticationException(message="Invalid or expired password reset token")
-        # Mock successful password reset
-        return
+        from app.models.user import User
+        from app.models.password_reset import PasswordResetToken
+        from datetime import datetime
+
+        reset_record = db.query(PasswordResetToken).filter(
+            PasswordResetToken.token == token,
+            PasswordResetToken.is_used == False,
+            PasswordResetToken.expires_at > datetime.utcnow()
+        ).first()
+
+        if not reset_record:
+            raise AuthenticationException(message="Invalid or expired reset token")
+
+        user = db.query(User).filter(User.id == reset_record.user_id, User.is_deleted == False).first()
+        if not user:
+            raise AuthenticationException(message="User account associated with this token not found")
+
+        user.hashed_password = get_password_hash(new_password)
+        user.last_password_changed_at = datetime.utcnow()
+        
+        reset_record.is_used = True
+        reset_record.used_at = datetime.utcnow()
+        
+        db.add(user)
+        db.add(reset_record)
+        db.commit()
+        logger.info(f"Password reset completed for user_id={reset_record.user_id}")

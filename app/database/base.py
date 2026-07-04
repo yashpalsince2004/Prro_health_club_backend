@@ -23,4 +23,4 @@ class Base(DeclarativeBase):
 
 
 # Import all models to ensure they are registered on the Base metadata for Alembic discovery
-from app.models import user, profile, member, trainer, plan, membership, payment, attendance, workout, diet, association, notification  # noqa: F401
+from app.models import user, profile, member, trainer, plan, membership, payment, attendance, workout, diet, association, notification, password_reset, receipt  # noqa: F401

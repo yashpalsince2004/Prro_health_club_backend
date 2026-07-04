@@ -125,6 +125,44 @@ def create_membership(
         raise e
 
 
+@router.get("/active/me", response_model=None)
+def get_my_active_membership(
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user_context)
+):
+    """Retrieve the currently active membership for the logged-in member."""
+    from app.models.profile import Profile
+    logger.info(f"[get_my_active_membership] user={current_user.user_id}")
+    
+    if current_user.role != UserRole.MEMBER:
+        raise AuthorizationException(message="Only members can access this endpoint")
+        
+    profile = db.query(Profile).filter(Profile.user_id == current_user.user_id).first()
+    if not profile:
+        raise NotFoundException(message="Member profile not found")
+        
+    member = db.query(Member).filter(Member.profile_id == profile.id, Member.is_deleted == False).first()
+    if not member:
+        raise NotFoundException(message="Member record not found")
+        
+    today = date.today()
+    membership = db.query(Membership).options(
+        joinedload(Membership.plan)
+    ).filter(
+        Membership.member_id == member.id,
+        Membership.status == SubscriptionStatus.ACTIVE,
+        Membership.start_date <= today,
+        Membership.end_date >= today,
+        Membership.is_deleted == False
+    ).order_by(Membership.end_date.desc()).first()
+    
+    if not membership:
+        raise NotFoundException(message="No active membership subscription found")
+        
+    res_data = _map_membership_to_response(membership)
+    return success_response(message="Active membership retrieved", data=res_data.model_dump())
+
+
 @router.get("/expiring-soon", response_model=None)
 def list_expiring_memberships(
     db: Session = Depends(get_db),

@@ -5,6 +5,13 @@ from app.core.config import settings
 from loguru import logger
 
 DATABASE_URL = settings.DATABASE_URL
+if DATABASE_URL and "pgbouncer=" in DATABASE_URL:
+    from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+    parsed = urlparse(DATABASE_URL)
+    query_params = parse_qs(parsed.query)
+    query_params.pop("pgbouncer", None)
+    new_query = urlencode(query_params, doseq=True)
+    DATABASE_URL = urlunparse(parsed._replace(query=new_query))
 
 # Handle fallback for local development before env is fully configured
 if not DATABASE_URL:

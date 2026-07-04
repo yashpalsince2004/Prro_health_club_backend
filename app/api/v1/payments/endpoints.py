@@ -55,9 +55,13 @@ def _map_payment_to_response(p: Payment) -> PaymentResponse:
     )
 
 
+from fastapi import APIRouter, Depends, Query, status, BackgroundTasks, Response
+from app.utils.receipt import generate_receipt_number
+
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=None)
 def record_payment(
     payload: PaymentCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
 ):
@@ -65,7 +69,7 @@ def record_payment(
     logger.info(f"[record_payment] user={current_user.user_id} member={payload.member_id} amount={payload.amount_paid}")
 
     # Validate that membership exists
-    membership = db.query(Membership).filter(Membership.id == payload.membership_id, Membership.is_deleted == False).first()
+    membership = db.query(Membership).options(joinedload(Membership.plan)).filter(Membership.id == payload.membership_id, Membership.is_deleted == False).first()
     if not membership:
         raise NotFoundException(message="Membership subscription not found")
 
@@ -79,6 +83,9 @@ def record_payment(
         raise ConflictException(message="Membership subscription does not belong to the specified member")
 
     try:
+        # Generate sequential receipt number
+        receipt_number = generate_receipt_number(db)
+        
         new_payment = Payment(
             membership_id=payload.membership_id,
             member_id=payload.member_id,
@@ -88,7 +95,8 @@ def record_payment(
             transaction_reference=payload.transaction_reference,
             payment_date=payload.payment_date or datetime.now(timezone.utc),
             notes=payload.notes,
-            collected_by=current_user.user_id
+            collected_by=current_user.user_id,
+            receipt_number=receipt_number
         )
         db.add(new_payment)
         db.commit()
@@ -101,6 +109,30 @@ def record_payment(
                 notify_payment_received(db, member_user_id=member_user_id, payment_id=new_payment.id, amount=Decimal(str(new_payment.amount_paid)))
         except Exception as notify_err:
             logger.error(f"Failed to trigger payment notification (non-critical): {str(notify_err)}")
+
+        # Fire payment receipt email side-effect via Resend in BackgroundTasks
+        try:
+            from app.services import email_service
+            member_profile = db.query(Profile).filter(Profile.id == member.profile_id).first()
+            member_user = db.query(User).filter(User.id == member_profile.user_id).first() if member_profile else None
+            if member_user and member_profile:
+                background_tasks.add_task(
+                    email_service.send_payment_receipt_email,
+                    to_email=member_user.email,
+                    member_name=member_profile.full_name,
+                    receipt_number=receipt_number,
+                    plan_name=membership.plan.name,
+                    duration_days=membership.plan.duration_days,
+                    membership_start=membership.start_date,
+                    membership_end=membership.end_date,
+                    amount_paid=Decimal(str(new_payment.amount_paid)),
+                    payment_method=new_payment.payment_method.value,
+                    transaction_reference=new_payment.transaction_reference,
+                    payment_date=new_payment.payment_date,
+                    discount_percent=float(membership.discount_percent),
+                )
+        except Exception as email_err:
+            logger.error(f"Failed to trigger payment receipt email (non-critical): {str(email_err)}")
 
         # Reload for mapping
         p_with_relations = db.query(Payment).options(
@@ -115,6 +147,68 @@ def record_payment(
         db.rollback()
         logger.error(f"[record_payment] error recording transaction: {str(e)}")
         raise e
+
+
+@router.get("/{payment_id}/receipt", response_model=None)
+def download_payment_receipt(
+    payment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user_context)
+):
+    """Generate and return A4 PDF invoice receipt for the specified payment."""
+    logger.info(f"[download_payment_receipt] user={current_user.user_id} payment={payment_id}")
+    
+    payment = db.query(Payment).options(
+        joinedload(Payment.member).joinedload(Member.profile),
+        joinedload(Payment.collector).joinedload(User.profile),
+        joinedload(Payment.membership).joinedload(Membership.plan)
+    ).filter(Payment.id == payment_id, Payment.is_deleted == False).first()
+    
+    if not payment:
+        raise NotFoundException(message="Payment record not found")
+        
+    # Auth: member can download own, staff can download any
+    if current_user.role == UserRole.MEMBER:
+        profile = db.query(Profile).filter(Profile.user_id == current_user.user_id).first()
+        if not profile or payment.member.profile_id != profile.id:
+            raise AuthorizationException(message="You are not authorized to access this receipt")
+            
+    # Verify receipt number is set, otherwise generate one retrospectively
+    from app.utils.receipt import generate_receipt_number
+    if not payment.receipt_number:
+        payment.receipt_number = generate_receipt_number(db)
+        db.add(payment)
+        db.commit()
+        
+    member_profile = payment.member.profile
+    member_email = db.query(User.email).filter(User.id == member_profile.user_id).scalar() or ""
+    collector_name = payment.collector.profile.full_name if payment.collector and payment.collector.profile else None
+    
+    from app.services.invoice_service import generate_payment_receipt_pdf
+    pdf_bytes = generate_payment_receipt_pdf(
+        receipt_number=payment.receipt_number,
+        member_name=member_profile.full_name,
+        member_email=member_email,
+        member_id=str(payment.member_id),
+        plan_name=payment.membership.plan.name,
+        duration_days=payment.membership.plan.duration_days,
+        membership_start=payment.membership.start_date,
+        membership_end=payment.membership.end_date,
+        amount_paid=Decimal(str(payment.amount_paid)),
+        payment_method=payment.payment_method.value,
+        transaction_reference=payment.transaction_reference,
+        payment_date=payment.payment_date,
+        collected_by_name=collector_name,
+        discount_percent=float(payment.membership.discount_percent)
+    )
+    
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="Receipt-{payment.receipt_number}.pdf"'
+        }
+    )
 
 
 @router.get("/summary", response_model=None)
@@ -291,3 +385,75 @@ def update_payment_status(
         db.rollback()
         logger.error(f"[update_payment_status] error modifying status: {str(e)}")
         raise e
+
+
+@router.get("/{payment_id}/receipt", response_model=None)
+def download_payment_receipt(
+    payment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user_context)
+):
+    """
+    Generate and download the payment receipt PDF.
+    - Owners can download their own payment receipts.
+    - Admins and Receptionists can download any payment receipts.
+    """
+    from fastapi import Response, HTTPException
+    from app.core.exceptions import AuthorizationException
+    
+    logger.info(f"[download_payment_receipt] user={current_user.user_id} payment={payment_id}")
+    
+    payment = db.query(Payment).filter(Payment.id == payment_id, Payment.is_deleted == False).first()
+    if not payment:
+        raise NotFoundException(message="Payment record not found")
+        
+    is_owner = False
+    if current_user.role == UserRole.MEMBER:
+        profile = db.query(Profile).filter(Profile.user_id == current_user.user_id).first()
+        member = db.query(Member).filter(Member.profile_id == profile.id).first() if profile else None
+        if member and payment.member_id == member.id:
+            is_owner = True
+            
+    if current_user.role not in [UserRole.ADMIN, UserRole.RECEPTIONIST] and not is_owner:
+        raise AuthorizationException(message="Access denied: You are not authorized to view this receipt")
+        
+    member = payment.member
+    member_profile = db.query(Profile).filter(Profile.id == member.profile_id).first()
+    member_user = db.query(User).filter(User.id == member_profile.user_id).first() if member_profile else None
+    
+    collector_profile = None
+    if payment.collected_by:
+        collector_user = db.query(User).filter(User.id == payment.collected_by).first()
+        if collector_user and collector_user.profile:
+            collector_profile = collector_user.profile
+            
+    collected_by_name = collector_profile.full_name if collector_profile else "System Admin"
+    plan_name = payment.membership.plan.name
+    duration_days = (payment.membership.end_date - payment.membership.start_date).days
+    
+    receipt_number = f"PRRO-{payment.payment_date.year}-{str(payment.id)[:8].upper()}"
+    
+    try:
+        from app.services.invoice_service import generate_payment_receipt_pdf
+        pdf_bytes = generate_payment_receipt_pdf(
+            receipt_number=receipt_number,
+            member_name=member_profile.full_name if member_profile else "Guest",
+            member_email=member_user.email if member_user else "",
+            member_id=str(member.id)[:8].upper(),
+            plan_name=plan_name,
+            duration_days=duration_days,
+            membership_start=payment.membership.start_date,
+            membership_end=payment.membership.end_date,
+            amount_paid=Decimal(str(payment.amount_paid)),
+            payment_method=payment.payment_method,
+            transaction_reference=payment.transaction_reference,
+            payment_date=payment.payment_date,
+            collected_by_name=collected_by_name
+        )
+    except Exception as pdf_err:
+        logger.error(f"PDF generation failed: {pdf_err}")
+        raise HTTPException(status_code=500, detail="Could not generate receipt")
+        
+    response = Response(content=pdf_bytes, media_type="application/pdf")
+    response.headers["Content-Disposition"] = f'attachment; filename="PRRO-Receipt-{receipt_number}.pdf"'
+    return response

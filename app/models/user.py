@@ -54,6 +54,11 @@ class User(Base, UUIDMixin, AuditMixin, SoftDeleteMixin):
         nullable=True,
         comment="Timestamp of the user's last successful login"
     )
+    last_password_changed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp when the user last changed their password"
+    )
 
     # Relationships
     profile: Mapped[Optional["Profile"]] = relationship(

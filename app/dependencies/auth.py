@@ -45,8 +45,28 @@ def get_current_user_context(token: Optional[str] = Depends(oauth2_scheme)) -> U
         raise AuthenticationException(message="Token credentials are malformed")
 
     try:
+        user_uuid = uuid.UUID(user_id_str)
+        
+        # Verify token has not been revoked by a password change
+        from app.database.session import SessionLocal
+        from app.models.user import User
+        import calendar
+        
+        db = SessionLocal()
+        try:
+            db_user = db.query(User).filter(User.id == user_uuid, User.is_deleted == False).first()
+            if db_user and db_user.last_password_changed_at and payload.get("iat"):
+                token_iat = payload.get("iat")
+                if isinstance(token_iat, (int, float)):
+                    user_change_ts = calendar.timegm(db_user.last_password_changed_at.utctimetuple())
+                    # Give 1 second grace period to avoid timing anomalies
+                    if token_iat <= user_change_ts:
+                        raise AuthenticationException(message="Session revoked. Please login again.")
+        finally:
+            db.close()
+
         return UserContext(
-            user_id=uuid.UUID(user_id_str),
+            user_id=user_uuid,
             role=role,
             gym_id=uuid.UUID(gym_id_str),
             branch_id=uuid.UUID(branch_id_str) if branch_id_str else None

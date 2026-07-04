@@ -26,7 +26,22 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr = Field(..., description="Email address linked to the user account")
 
 
+from pydantic import BaseModel, EmailStr, Field, field_validator
+import re
+
+
 class ResetPasswordRequest(BaseModel):
     """Schema submitting a new password using a token payload"""
     token: str = Field(..., description="One-time validation reset token")
     new_password: str = Field(..., min_length=8, description="New user password (minimum 8 characters)")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v

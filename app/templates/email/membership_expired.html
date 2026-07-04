@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 style="color:#1a1a1a; margin:0 0 20px;">Your membership has expired ⏳</h2>
+<p style="color:#333; line-height:1.7;">
+  Hi {{ member_name }},
+</p>
+<p style="color:#333; line-height:1.7;">
+  Your active subscription for the <strong>{{ plan_name }}</strong> package ended on <strong>{{ expired_on }}</strong>.
+</p>
+
+<div style="background-color: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 15px; margin: 20px 0; text-align: center; color: #555; font-size: 13px;">
+  To continue accessing the gym floor, booking personal training sessions, and syncing attendance, please renew your plan.
+</div>
+
+<div style="text-align:center; margin:30px 0;">
+  <a href="{{ frontend_url }}/login"
+     style="background:#FF6B00; color:#fff; padding:12px 32px; border-radius:6px;
+            text-decoration:none; font-weight:bold; font-size:15px; display:inline-block;">
+    Renew Subscription Now →
+  </a>
+</div>
+
+<p style="color:#666; font-size:12px; text-align:center;">
+  We hope to see you back on the gym floor pushing your limits soon! If you have already renewed, please ignore this email.
+</p>
+{% endblock %}

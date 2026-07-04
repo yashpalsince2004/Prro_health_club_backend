@@ -5,7 +5,9 @@ Pydantic schemas for Member management.
 from datetime import date
 from uuid import UUID
 from typing import Optional, List
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
+# pyrefly: ignore [missing-import]
 from pydantic_core import PydanticCustomError
 from app.core.constants import UserRole, SubscriptionStatus
 from app.models.profile import Gender

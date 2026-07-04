@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 style="color:#FF6B00; margin:0 0 20px;">Welcome, {{ member_name }}! 💪</h2>
+<p style="color:#333; line-height:1.7;">
+  We're thrilled to have you join <strong>Prro Health Club</strong>.
+  Your account has been created and you're ready to start your fitness journey.
+</p>
+<div style="background:#fff; border-left:4px solid #FF6B00; padding:15px 20px; margin:20px 0; border-radius:0 6px 6px 0;">
+  <p style="margin:0; color:#333;"><strong>Email:</strong> {{ email }}</p>
+  {% if temp_password %}
+  <p style="margin:8px 0 0; color:#333;"><strong>Temporary Password:</strong> {{ temp_password }}</p>
+  <p style="margin:8px 0 0; color:#888; font-size:12px;">Please change this after your first login.</p>
+  {% endif %}
+</div>
+<p style="color:#333; line-height:1.7;">
+  Visit the front desk or log in to view your membership details, workout plan, and diet plan.
+</p>
+<div style="text-align:center; margin:30px 0;">
+  <a href="{{ frontend_url }}/login"
+     style="background:#FF6B00; color:#fff; padding:12px 32px; border-radius:6px;
+            text-decoration:none; font-weight:bold; font-size:15px;">
+    Login to Your Dashboard →
+  </a>
+</div>
+{% endblock %}

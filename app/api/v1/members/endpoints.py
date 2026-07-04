@@ -73,9 +73,12 @@ def _map_member_to_response(member: Member) -> MemberResponse:
     )
 
 
+from fastapi import APIRouter, Depends, Query, status, BackgroundTasks
+
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=None)
 def create_member(
     payload: MemberCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
 ):
@@ -120,6 +123,17 @@ def create_member(
         )
         db.add(new_member)
         db.commit()
+
+        # Fire welcome email side-effect via Resend in BackgroundTasks
+        try:
+            from app.services import email_service
+            background_tasks.add_task(
+                email_service.send_welcome_email,
+                new_user.email,
+                new_profile.full_name
+            )
+        except Exception as email_err:
+            logger.error(f"Welcome email failed (non-critical): {str(email_err)}")
 
         # Eager load relationships for response
         member_with_relations = db.query(Member).options(
