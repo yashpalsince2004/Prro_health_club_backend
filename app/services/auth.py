@@ -1,6 +1,8 @@
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
+# pyrefly: ignore [missing-import]
+from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import AuthenticationException
 from app.core.security import (
@@ -10,32 +12,7 @@ from app.core.security import (
     get_password_hash,
     verify_password
 )
-
-# Hardcoded mocks for Phase 4 verification
-# These will be replaced by UserRepository queries in Phase 5
-MOCK_USERS = {
-    "admin@prrohealthclub.com": {
-        "id": "e9a039bd-6a84-486b-8874-885cc0a2569f",
-        "password_hash": get_password_hash("Password123"),
-        "role": "admin",
-        "gym_id": "aa30e46b-0b5c-48c2-a4f6-7b2434d284a1",
-        "branch_id": "bb30e46b-0b5c-48c2-a4f6-7b2434d284a2"
-    },
-    "trainer@prrohealthclub.com": {
-        "id": "f5a039bd-6a84-486b-8874-885cc0a2569f",
-        "password_hash": get_password_hash("Password123"),
-        "role": "trainer",
-        "gym_id": "aa30e46b-0b5c-48c2-a4f6-7b2434d284a1",
-        "branch_id": "bb30e46b-0b5c-48c2-a4f6-7b2434d284a2"
-    },
-    "member@prrohealthclub.com": {
-        "id": "c1a039bd-6a84-486b-8874-885cc0a2569f",
-        "password_hash": get_password_hash("Password123"),
-        "role": "member",
-        "gym_id": "aa30e46b-0b5c-48c2-a4f6-7b2434d284a1",
-        "branch_id": "bb30e46b-0b5c-48c2-a4f6-7b2434d284a2"
-    }
-}
+from loguru import logger
 
 
 class AuthService:
@@ -44,28 +21,55 @@ class AuthService:
     Bridges endpoints to the database repositories and token generation logic.
     """
     @staticmethod
-    def authenticate_user(email: str, password: str) -> Dict[str, Any]:
+    def authenticate_user(email: str, password: str, db: Session) -> Dict[str, Any]:
         """
-        Verify login credentials.
+        Verify login credentials against the database.
         Returns a dictionary representing access and refresh token metadata.
         """
-        user = MOCK_USERS.get(email.lower())
+        from app.models.user import User
+
+        user = db.query(User).filter(
+            User.email == email.lower(),
+            User.is_deleted == False
+        ).first()
+
+        logger.info(f"Login attempt: email={email.lower()}, user_found={user is not None}")
+
         if not user:
             raise AuthenticationException(message="Incorrect email or password")
-            
-        if not verify_password(password, user["password_hash"]):
+
+        if not user.is_active:
+            logger.warning(f"Login blocked: account inactive for email={email.lower()}")
+            raise AuthenticationException(message="Account is disabled. Please contact support.")
+
+        if not verify_password(password, user.hashed_password):
+            logger.warning(f"Login failed: bad password for email={email.lower()}")
             raise AuthenticationException(message="Incorrect email or password")
+
+        # Update last login timestamp
+        user.last_login_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # Resolve gym_id and branch_id from user profile if available
+        gym_id = None
+        branch_id = None
+        if user.profile and hasattr(user.profile, "gym_id"):
+            gym_id = str(user.profile.gym_id) if user.profile.gym_id else None
+        if user.profile and hasattr(user.profile, "branch_id"):
+            branch_id = str(user.profile.branch_id) if user.profile.branch_id else None
 
         # Generate tokens
         access_token = create_access_token(
-            subject=user["id"],
-            role=user["role"],
-            gym_id=user["gym_id"],
-            branch_id=user["branch_id"]
+            subject=str(user.id),
+            role=user.role.value if hasattr(user.role, "value") else user.role,
+            gym_id=gym_id,
+            branch_id=branch_id
         )
         refresh_token = create_refresh_token(
-            subject=user["id"]
+            subject=str(user.id)
         )
+
+        logger.info(f"Login successful: user_id={user.id}, role={user.role}")
 
         return {
             "access_token": access_token,
@@ -75,34 +79,41 @@ class AuthService:
         }
 
     @staticmethod
-    def refresh_session_token(refresh_token: str) -> Dict[str, Any]:
+    def refresh_session_token(refresh_token: str, db: Session) -> Dict[str, Any]:
         """
         Exchange a valid refresh token for a new short-lived access token.
         """
+        from app.models.user import User
+
         payload = decode_token(refresh_token)
         if not payload or payload.get("type") != "refresh":
             raise AuthenticationException(message="Invalid or expired session refresh token")
 
         user_id = payload.get("sub")
-        # In a real environment, we verify the user still exists and is active in the database.
-        # Find user by ID in mocks
-        user = None
-        for u in MOCK_USERS.values():
-            if u["id"] == user_id:
-                user = u
-                break
-                
+        user = db.query(User).filter(
+            User.id == user_id,
+            User.is_active == True,
+            User.is_deleted == False
+        ).first()
+
         if not user:
             raise AuthenticationException(message="User account associated with session not found")
 
+        gym_id = None
+        branch_id = None
+        if user.profile and hasattr(user.profile, "gym_id"):
+            gym_id = str(user.profile.gym_id) if user.profile.gym_id else None
+        if user.profile and hasattr(user.profile, "branch_id"):
+            branch_id = str(user.profile.branch_id) if user.profile.branch_id else None
+
         new_access = create_access_token(
-            subject=user["id"],
-            role=user["role"],
-            gym_id=user["gym_id"],
-            branch_id=user["branch_id"]
+            subject=str(user.id),
+            role=user.role.value if hasattr(user.role, "value") else user.role,
+            gym_id=gym_id,
+            branch_id=branch_id
         )
         new_refresh = create_refresh_token(
-            subject=user["id"]
+            subject=str(user.id)
         )
 
         return {

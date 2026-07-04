@@ -16,19 +16,20 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post("/login", response_model=None)
-def login(payload: LoginRequest):
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate credentials and establish session tokens"""
     tokens = AuthService.authenticate_user(
         email=payload.email,
-        password=payload.password
+        password=payload.password,
+        db=db
     )
     return success_response(message="Login successful", data=tokens)
 
 
 @router.post("/refresh", response_model=None)
-def refresh_token(payload: TokenRefreshRequest):
+def refresh_token(payload: TokenRefreshRequest, db: Session = Depends(get_db)):
     """Exchange refresh tokens for new session access tokens"""
-    tokens = AuthService.refresh_session_token(refresh_token=payload.refresh_token)
+    tokens = AuthService.refresh_session_token(refresh_token=payload.refresh_token, db=db)
     return success_response(message="Token refreshed successfully", data=tokens)
 
 
