@@ -1,3 +1,5 @@
+# pyrefly: ignore [missing-import]
+from app.core.exceptions import NotFoundException
 from fastapi import APIRouter, Depends, status
 from app.dependencies.auth import get_current_user_context, RoleChecker, UserContext
 from app.schemas.auth import (
@@ -7,6 +9,7 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     ResetPasswordRequest
 )
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.services.auth import AuthService
@@ -40,6 +43,7 @@ def logout(payload: TokenRefreshRequest):
     return success_response(message="Logout successful")
 
 
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, status, Request, BackgroundTasks
 from app.core.limiter import limiter
 
