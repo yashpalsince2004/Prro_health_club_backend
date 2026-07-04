@@ -4,14 +4,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 # pyrefly: ignore [missing-import]
 from fastapi import Depends
-# pyrefly: ignore [missing-import]
-from fastapi.security import OAuth2PasswordBearer
-from jwt.exceptions import (
-    ExpiredSignatureError,
-    InvalidSignatureError,
-    DecodeError,
-    PyJWTError,
-)
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from loguru import logger
 from app.core.config import settings
 from app.core.exceptions import AuthenticationException, AuthorizationException
@@ -24,11 +17,11 @@ logger.info(
     f"ACCESS_TOKEN_EXPIRE_MINUTES={settings.ACCESS_TOKEN_EXPIRE_MINUTES}"
 )
 
-# Define standard OAuth2 scheme
-oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/api/v1/auth/login",
-    auto_error=False
-)
+# HTTP Bearer scheme — generates a correct OpenAPI 'http bearer' security scheme.
+# Swagger will show a simple 'Bearer token' input box, not an OAuth2 password form.
+# auto_error=False lets us produce a structured 401 instead of a raw FastAPI exception.
+http_bearer = HTTPBearer(auto_error=False)
+
 
 
 @dataclass
@@ -40,16 +33,20 @@ class UserContext:
     branch_id: Optional[uuid.UUID] = None
 
 
-def get_current_user_context(token: Optional[str] = Depends(oauth2_scheme)) -> UserContext:
+def get_current_user_context(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
+) -> UserContext:
     """
     FastAPI dependency that extracts and validates the JWT from the Authorization header,
     returning a strongly-typed security context.
 
+    Reads: Authorization: Bearer <token>
     This is the SINGLE place that validates JWTs. All 401 decisions happen here.
     """
-    if not token:
+    if not credentials or not credentials.credentials:
         raise AuthenticationException(message="Authentication credentials were not provided")
 
+    token = credentials.credentials
     logger.debug(f"[AUTH] Validating token (first 20 chars): {token[:20]}...")
 
     payload = decode_token(token)
