@@ -7,6 +7,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import date, timedelta
 from decimal import Decimal
+from pydantic import BaseModel
 from loguru import logger
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
