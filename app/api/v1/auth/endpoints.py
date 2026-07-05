@@ -108,12 +108,26 @@ def get_me(
             "emergency_contact_phone": profile.emergency_contact_phone,
             "biometric_device_id": profile.biometric_device_id if hasattr(profile, 'biometric_device_id') else None
         }
-        # Include member_id if present
+    trainer_id = None
+    if user.role == UserRole.TRAINER and profile:
+        from app.models.trainer import Trainer
+        trainer_record = db.query(Trainer).filter(
+            Trainer.profile_id == profile.id,
+            Trainer.is_deleted == False
+        ).first()
+        if trainer_record:
+            trainer_id = str(trainer_record.id)
+
+    member_id = None
+    if user.role == UserRole.MEMBER and profile:
         from app.models.member import Member
-        member = db.query(Member).filter(Member.profile_id == profile.id).first()
-        if member:
-            profile_data["member_id"] = str(member.id)
-        
+        member_record = db.query(Member).filter(
+            Member.profile_id == profile.id,
+            Member.is_deleted == False
+        ).first()
+        if member_record:
+            member_id = str(member_record.id)
+
     return success_response(
         message="Session user context retrieved",
         data={
@@ -121,7 +135,9 @@ def get_me(
             "email": user.email,
             "role": user.role.value if hasattr(user.role, 'value') else user.role,
             "is_active": user.is_active,
-            "profile": profile_data
+            "profile": profile_data,
+            "trainer_id": trainer_id,
+            "member_id": member_id
         }
     )
 

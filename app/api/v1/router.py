@@ -16,6 +16,9 @@ from app.api.v1.admin.cron import router as admin_cron_router
 
 from app.api.v1.receptionists.endpoints import router as receptionists_router
 from app.api.v1.leads.endpoints import router as leads_router
+from app.api.v1.exercise_library.endpoints import router as exercise_library_router
+from app.api.v1.admin.reports import router as reports_router
+from app.api.v1.admin.settings import router as settings_router
 
 api_router = APIRouter()
 
@@ -26,6 +29,9 @@ api_router.include_router(members_router, prefix="/members", tags=["Members"])
 api_router.include_router(trainers_router, prefix="/trainers", tags=["Trainers"])
 api_router.include_router(receptionists_router, prefix="/receptionists", tags=["Receptionists"])
 api_router.include_router(leads_router, prefix="/leads", tags=["Leads"])
+api_router.include_router(exercise_library_router, prefix="/exercise-library", tags=["Exercise Library"])
+api_router.include_router(reports_router, prefix="/admin/reports", tags=["Reports"])
+api_router.include_router(settings_router, prefix="/admin/settings", tags=["Settings"])
 api_router.include_router(memberships_router, prefix="/memberships", tags=["Memberships"])
 api_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
 api_router.include_router(attendance_router, prefix="/attendance", tags=["Attendance"])
