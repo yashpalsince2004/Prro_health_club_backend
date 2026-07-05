@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from app.core.exceptions import NotFoundException, AuthenticationException
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
+from app.core.constants import UserRole
 from app.dependencies.auth import get_current_user_context, RoleChecker, UserContext
 from app.schemas.auth import (
     LoginRequest,
