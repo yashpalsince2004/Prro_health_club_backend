@@ -33,7 +33,7 @@ from app.api.v1.members.schemas import ProfileResponse
 router = APIRouter()
 
 
-def _map_trainer_to_response(trainer: Trainer, hide_private_info: bool = False) -> TrainerResponse:
+def _map_trainer_to_response(trainer: Trainer, db: Session, hide_private_info: bool = False) -> TrainerResponse:
     """Helper to map a Trainer db model to TrainerResponse schema, hiding sensitive fields if needed."""
     profile_db = trainer.profile
     
@@ -56,7 +56,7 @@ def _map_trainer_to_response(trainer: Trainer, hide_private_info: bool = False) 
     mapped_members = []
     if not hide_private_info:
         from app.api.v1.members.endpoints import _map_member_to_response
-        mapped_members = [_map_member_to_response(m) for m in trainer.assigned_members if not m.is_deleted]
+        mapped_members = [_map_member_to_response(m, db) for m in trainer.assigned_members if not m.is_deleted]
 
     return TrainerResponse(
         id=trainer.id,
@@ -126,7 +126,7 @@ def create_trainer(
             joinedload(Trainer.profile)
         ).filter(Trainer.id == new_trainer.id).first()
 
-        res_data = _map_trainer_to_response(trainer_with_relations)
+        res_data = _map_trainer_to_response(trainer_with_relations, db)
         return success_response(message="Trainer created successfully", data=res_data.model_dump(), status_code=201)
 
     except Exception as e:
@@ -174,7 +174,7 @@ def list_trainers(
     # Determine privacy: Hide contact info if caller is a Member
     hide_private_info = current_user.role == UserRole.MEMBER
 
-    mapped_trainers = [_map_trainer_to_response(t, hide_private_info).model_dump() for t in trainers]
+    mapped_trainers = [_map_trainer_to_response(t, db, hide_private_info).model_dump() for t in trainers]
     return paginated_response(
         message="Trainers list retrieved successfully",
         data=mapped_trainers,
@@ -212,7 +212,7 @@ def get_trainer(
         if trainer.profile.user_id == current_user.user_id:
             hide_private_info = False
 
-    res_data = _map_trainer_to_response(trainer, hide_private_info)
+    res_data = _map_trainer_to_response(trainer, db, hide_private_info)
     return success_response(message="Trainer details retrieved", data=res_data.model_dump())
 
 
@@ -259,7 +259,7 @@ def update_trainer(
         db.commit()
         db.refresh(trainer)
 
-        res_data = _map_trainer_to_response(trainer)
+        res_data = _map_trainer_to_response(trainer, db)
         return success_response(message="Trainer updated successfully", data=res_data.model_dump())
 
     except Exception as e:

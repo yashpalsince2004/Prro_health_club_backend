@@ -31,6 +31,8 @@ class MemberCreate(BaseModel):
     # Member details
     joining_date: date = Field(default_factory=date.today, description="Gym joining date")
     notes: Optional[str] = Field(None, description="Gym notes or constraints")
+    plan_id: Optional[UUID] = Field(None, description="Optional subscription plan to assign")
+    trainer_id: Optional[UUID] = Field(None, description="Optional trainer to assign")
 
     @field_validator("password")
     @classmethod
@@ -57,6 +59,8 @@ class MemberUpdate(BaseModel):
     notes: Optional[str] = Field(None, description="Gym notes or constraints")
     biometric_device_id: Optional[int] = Field(None, description="Biometric terminal device PIN")
     is_active: Optional[bool] = Field(None, description="User active status flag")
+    plan_id: Optional[UUID] = Field(None, description="Pricing plan template UUID")
+    trainer_id: Optional[UUID] = Field(None, description="Assigned trainer UUID")
 
 
 class ProfileResponse(BaseModel):
@@ -71,6 +75,7 @@ class ProfileResponse(BaseModel):
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     biometric_device_id: Optional[int] = None
+    email: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -87,6 +92,15 @@ class ActiveMembershipSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TrainerSummary(BaseModel):
+    """Minimal representation of an assigned trainer."""
+    id: UUID
+    full_name: str
+    specialization: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MemberResponse(BaseModel):
     """Schema representing complete member records with nested profiles and active plans."""
     id: UUID
@@ -94,6 +108,9 @@ class MemberResponse(BaseModel):
     notes: Optional[str] = None
     profile: ProfileResponse
     active_membership: Optional[ActiveMembershipSummary] = None
+    is_active: bool = True
+    last_visit: Optional[date] = None
+    assigned_trainer: Optional[TrainerSummary] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -105,3 +122,29 @@ class MemberListResponse(BaseModel):
     page: int
     per_page: int
     total_pages: int
+
+
+class BulkArchiveRequest(BaseModel):
+    ids: List[UUID]
+
+
+class BulkRestoreRequest(BaseModel):
+    ids: List[UUID]
+
+
+class BulkAssignTrainerRequest(BaseModel):
+    member_ids: List[UUID]
+    trainer_id: UUID
+
+
+class BulkChangePlanRequest(BaseModel):
+    member_ids: List[UUID]
+    plan_id: UUID
+
+
+class BulkActivateRequest(BaseModel):
+    ids: List[UUID]
+
+
+class BulkDeactivateRequest(BaseModel):
+    ids: List[UUID]

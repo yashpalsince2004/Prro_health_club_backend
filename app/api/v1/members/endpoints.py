@@ -6,8 +6,11 @@ import math
 from typing import Optional
 from uuid import UUID
 from datetime import datetime, date, timezone
+# pyrefly: ignore [missing-import]
 from loguru import logger
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, Query, status
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session, joinedload
 from app.database.session import get_db
 from app.core.exceptions import ConflictException, NotFoundException, AuthorizationException
@@ -25,8 +28,18 @@ from app.api.v1.members.schemas import (
     MemberResponse,
     ProfileResponse,
     ActiveMembershipSummary,
-    MemberListResponse
+    MemberListResponse,
+    TrainerSummary,
+    BulkArchiveRequest,
+    BulkRestoreRequest,
+    BulkAssignTrainerRequest,
+    BulkChangePlanRequest,
+    BulkActivateRequest,
+    BulkDeactivateRequest
 )
+from app.models.attendance import AttendanceLog
+from app.models.trainer import Trainer
+from app.models.association import trainer_members
 
 router = APIRouter()
 
@@ -48,7 +61,7 @@ def _get_active_membership_summary(member: Member) -> Optional[ActiveMembershipS
     return None
 
 
-def _map_member_to_response(member: Member) -> MemberResponse:
+def _map_member_to_response(member: Member, db: Session) -> MemberResponse:
     """Helper to map a Member db model to MemberResponse schema."""
     profile_db = member.profile
     profile_res = ProfileResponse(
@@ -61,18 +74,43 @@ def _map_member_to_response(member: Member) -> MemberResponse:
         address=profile_db.address,
         emergency_contact_name=profile_db.emergency_contact_name,
         emergency_contact_phone=profile_db.emergency_contact_phone,
-        biometric_device_id=profile_db.biometric_device_id
+        biometric_device_id=profile_db.biometric_device_id,
+        email=profile_db.user.email if profile_db.user else None
     )
+
+    # Fetch last visit
+    last_visit_log = db.query(AttendanceLog).filter(
+        AttendanceLog.member_id == member.id
+    ).order_by(AttendanceLog.check_in.desc()).first()
+    last_visit = last_visit_log.check_in.date() if last_visit_log else None
+
+    # Fetch active trainer assignment
+    active_trainer = db.query(Trainer).join(trainer_members).filter(
+        trainer_members.c.member_id == member.id,
+        trainer_members.c.is_active == True
+    ).first()
+
+    trainer_summary = None
+    if active_trainer:
+        trainer_summary = TrainerSummary(
+            id=active_trainer.id,
+            full_name=active_trainer.profile.full_name,
+            specialization=active_trainer.specialization
+        )
 
     return MemberResponse(
         id=member.id,
         joining_date=member.joining_date,
         notes=member.notes,
         profile=profile_res,
-        active_membership=_get_active_membership_summary(member)
+        active_membership=_get_active_membership_summary(member),
+        is_active=profile_db.user.is_active if profile_db.user else True,
+        last_visit=last_visit,
+        assigned_trainer=trainer_summary
     )
 
 
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, Query, status, BackgroundTasks
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=None)
@@ -122,9 +160,38 @@ def create_member(
             notes=payload.notes
         )
         db.add(new_member)
+        db.flush()
+
+        # Handle Membership Assignment
+        if payload.plan_id:
+            from app.models.plan import MembershipPlan
+            from datetime import timedelta
+            plan = db.query(MembershipPlan).filter(MembershipPlan.id == payload.plan_id, MembershipPlan.is_active == True).first()
+            if plan:
+                new_sub = Membership(
+                    member_id=new_member.id,
+                    plan_id=payload.plan_id,
+                    start_date=payload.joining_date,
+                    end_date=payload.joining_date + timedelta(days=plan.duration_days),
+                    status=SubscriptionStatus.ACTIVE
+                )
+                db.add(new_sub)
+
+        # Handle Trainer Assignment
+        if payload.trainer_id:
+            trainer = db.query(Trainer).filter(Trainer.id == payload.trainer_id, Trainer.is_deleted == False).first()
+            if trainer:
+                db.execute(
+                    trainer_members.insert().values(
+                        trainer_id=payload.trainer_id,
+                        member_id=new_member.id,
+                        is_active=True
+                    )
+                )
+
         db.commit()
 
-        # Fire welcome email side-effect via Resend in BackgroundTasks
+        # Welcome email side-effect
         try:
             from app.services import email_service
             background_tasks.add_task(
@@ -141,7 +208,7 @@ def create_member(
             joinedload(Member.memberships).joinedload(Membership.plan)
         ).filter(Member.id == new_member.id).first()
 
-        res_data = _map_member_to_response(member_with_relations)
+        res_data = _map_member_to_response(member_with_relations, db)
         return success_response(message="Member created successfully", data=res_data.model_dump(), status_code=201)
 
     except Exception as e:
@@ -156,30 +223,47 @@ def list_members(
     per_page: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None),
     status: Optional[str] = Query("all", description="Filter by active, expired, or all"),
+    gender: Optional[str] = Query(None),
+    plan_id: Optional[UUID] = Query(None),
+    trainer_id: Optional[UUID] = Query(None),
+    join_from: Optional[date] = Query(None),
+    join_to: Optional[date] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    show_archived: bool = Query(False),
     db: Session = Depends(get_db),
-    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TRAINER]))
 ):
-    """List paginated gym members with search and status filters."""
-    logger.info(f"[list_members] user={current_user.user_id} page={page} per_page={per_page}")
+    """List paginated gym members with search and status filters (Admins, Receptionists, and Trainers)."""
+    logger.info(f"[list_members] user={current_user.user_id} page={page} per_page={per_page} show_archived={show_archived}")
 
-    query = db.query(Member).join(Member.profile).join(Profile.user).filter(
-        Member.is_deleted == False,
-        User.is_deleted == False
-    )
+    # Eagerly filter by role: trainers can only read their assigned members
+    query = db.query(Member).join(Member.profile).join(Profile.user)
 
-    # 1. Apply search filter
+    if current_user.role == UserRole.TRAINER:
+        query = query.filter(
+            Member.trainers.any(Trainer.id == current_user.trainer_id)
+        )
+
+    # Apply soft-delete archive visibility
+    if show_archived:
+        query = query.filter(Member.is_deleted == True)
+    else:
+        query = query.filter(Member.is_deleted == False, User.is_deleted == False)
+
+    # 1. Apply search filter (Full Name, Email, Phone, or Member ID)
     if search:
         search_filter = f"%{search}%"
+        from sqlalchemy import cast, String
         query = query.filter(
             (Profile.full_name.ilike(search_filter)) |
             (User.email.ilike(search_filter)) |
-            (Profile.phone.ilike(search_filter))
+            (Profile.phone.ilike(search_filter)) |
+            (cast(Member.id, String).ilike(search_filter))
         )
 
-    # 2. Apply status filter
+    # 2. Apply membership status filter
     today = date.today()
     if status == "active":
-        # Has at least one membership that is active and not expired
         query = query.filter(
             Member.memberships.any(
                 (Membership.status == SubscriptionStatus.ACTIVE) &
@@ -188,7 +272,6 @@ def list_members(
             )
         )
     elif status == "expired":
-        # Has no active memberships (either none or all expired)
         query = query.filter(
             ~Member.memberships.any(
                 (Membership.status == SubscriptionStatus.ACTIVE) &
@@ -197,16 +280,41 @@ def list_members(
             )
         )
 
-    # 3. Get paginated results
+    # 3. Apply gender filter
+    if gender:
+        query = query.filter(Profile.gender == gender)
+
+    # 4. Apply plan filter
+    if plan_id:
+        query = query.filter(
+            Member.memberships.any(Membership.plan_id == plan_id)
+        )
+
+    # 5. Apply trainer filter
+    if trainer_id:
+        query = query.filter(
+            Member.trainers.any(Trainer.id == trainer_id)
+        )
+
+    # 6. Apply joining date range
+    if join_from:
+        query = query.filter(Member.joining_date >= join_from)
+    if join_to:
+        query = query.filter(Member.joining_date <= join_to)
+
+    # 7. Apply user active status
+    if is_active is not None:
+        query = query.filter(User.is_active == is_active)
+
+    # Get paginated results
     total = query.count()
-    members = query.options(
-        joinedload(Member.profile),
-        joinedload(Member.memberships).joinedload(Membership.plan)
-    ).order_index = None  # Clear any default ordering
+    
+    # Order by joining date descending
+    query = query.order_by(Member.joining_date.desc())
     
     members = query.offset((page - 1) * per_page).limit(per_page).all()
+    mapped_members = [_map_member_to_response(m, db).model_dump() for m in members]
 
-    mapped_members = [_map_member_to_response(m).model_dump() for m in members]
     return paginated_response(
         message="Members list retrieved successfully",
         data=mapped_members,
@@ -214,6 +322,49 @@ def list_members(
         limit=per_page,
         total=total
     )
+
+
+@router.get("/stats", response_model=None)
+def get_member_stats(
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TRAINER]))
+):
+    """Retrieve aggregate member KPIs for management dashboard."""
+    logger.info(f"[get_member_stats] user={current_user.user_id}")
+
+    total = db.query(Member).filter(Member.is_deleted == False).count()
+    
+    today = date.today()
+    active = db.query(Member).filter(
+        Member.is_deleted == False,
+        Member.memberships.any(
+            (Membership.status == SubscriptionStatus.ACTIVE) &
+            (Membership.start_date <= today) &
+            (Membership.end_date >= today)
+        )
+    ).count()
+
+    inactive = db.query(Member).join(Member.profile).join(Profile.user).filter(
+        Member.is_deleted == False,
+        User.is_deleted == False,
+        User.is_active == False
+    ).count()
+
+    expired = db.query(Member).filter(
+        Member.is_deleted == False,
+        ~Member.memberships.any(
+            (Membership.status == SubscriptionStatus.ACTIVE) &
+            (Membership.start_date <= today) &
+            (Membership.end_date >= today)
+        )
+    ).count()
+
+    return success_response(message="Member KPI stats retrieved", data={
+        "total_members": total,
+        "active_members": active,
+        "inactive_members": inactive,
+        "expired_memberships": expired
+    })
 
 
 @router.get("/{member_id}", response_model=None)
@@ -241,7 +392,7 @@ def get_member(
         if member.profile.user_id != current_user.user_id:
             raise AuthorizationException(message="You are not authorized to view this profile")
 
-    res_data = _map_member_to_response(member)
+    res_data = _map_member_to_response(member, db)
     return success_response(message="Member details retrieved", data=res_data.model_dump())
 
 
@@ -288,18 +439,70 @@ def update_member(
             user.is_active = payload.is_active
 
         # Update profile details
-        for field, value in payload.model_dump(exclude={"notes", "is_active"}, exclude_unset=True).items():
+        for field, value in payload.model_dump(exclude={"notes", "is_active", "plan_id", "trainer_id"}, exclude_unset=True).items():
             setattr(profile, field, value)
 
         # Update member notes if provided
         if payload.notes is not None:
             member.notes = payload.notes
 
+        # Handle Plan update
+        if payload.plan_id is not None:
+            from app.models.plan import MembershipPlan
+            from datetime import timedelta
+            plan = db.query(MembershipPlan).filter(MembershipPlan.id == payload.plan_id, MembershipPlan.is_active == True).first()
+            if plan:
+                # Expire previous subscriptions
+                db.query(Membership).filter(
+                    Membership.member_id == member.id,
+                    Membership.status == SubscriptionStatus.ACTIVE
+                ).update({Membership.status: SubscriptionStatus.EXPIRED})
+                
+                # Assign new active membership
+                today = date.today()
+                new_sub = Membership(
+                    member_id=member.id,
+                    plan_id=payload.plan_id,
+                    start_date=today,
+                    end_date=today + timedelta(days=plan.duration_days),
+                    status=SubscriptionStatus.ACTIVE
+                )
+                db.add(new_sub)
+
+        # Handle Trainer update
+        if payload.trainer_id is not None:
+            # Deactivate previous trainer assignments
+            db.execute(
+                trainer_members.update()
+                .where(trainer_members.c.member_id == member.id)
+                .values(is_active=False)
+            )
+            # Check if this assignment exists
+            existing_link = db.execute(
+                trainer_members.select()
+                .where(trainer_members.c.member_id == member.id, trainer_members.c.trainer_id == payload.trainer_id)
+            ).first()
+
+            if existing_link:
+                db.execute(
+                    trainer_members.update()
+                    .where(trainer_members.c.member_id == member.id, trainer_members.c.trainer_id == payload.trainer_id)
+                    .values(is_active=True, assigned_at=datetime.now(timezone.utc))
+                )
+            else:
+                db.execute(
+                    trainer_members.insert().values(
+                        trainer_id=payload.trainer_id,
+                        member_id=member.id,
+                        is_active=True
+                    )
+                )
+
         db.commit()
 
         # Reload for response
         db.refresh(member)
-        res_data = _map_member_to_response(member)
+        res_data = _map_member_to_response(member, db)
         return success_response(message="Member updated successfully", data=res_data.model_dump())
 
     except Exception as e:
@@ -343,4 +546,245 @@ def delete_member(
     except Exception as e:
         db.rollback()
         logger.error(f"[delete_member] error during soft deletion: {str(e)}")
+        raise e
+
+
+@router.post("/{member_id}/restore", response_model=None)
+def restore_member(
+    member_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Restore an archived (soft deleted) member account."""
+    logger.info(f"[restore_member] user={current_user.user_id} action=restore target={member_id}")
+
+    member = db.query(Member).join(Member.profile).filter(
+        Member.id == member_id,
+        Member.is_deleted == True
+    ).first()
+
+    if not member:
+        raise NotFoundException(message="Archived member not found")
+
+    profile = member.profile
+    user = db.query(User).filter(User.id == profile.user_id).first()
+
+    try:
+        member.is_deleted = False
+        member.deleted_at = None
+        member.deleted_by = None
+
+        if user:
+            user.is_deleted = False
+            user.deleted_at = None
+            user.deleted_by = None
+            user.is_active = True
+
+        db.commit()
+        return success_response(message="Member restored successfully", data={})
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[restore_member] error during restoration: {str(e)}")
+        raise e
+
+
+@router.post("/bulk-archive", response_model=None)
+def bulk_archive_members(
+    payload: BulkArchiveRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Bulk soft delete multiple member accounts."""
+    logger.info(f"[bulk_archive_members] user={current_user.user_id} count={len(payload.ids)}")
+
+    try:
+        for member_id in payload.ids:
+            member = db.query(Member).filter(Member.id == member_id, Member.is_deleted == False).first()
+            if member:
+                member.soft_delete(updater_id=current_user.user_id)
+                user = db.query(User).join(Profile).filter(Profile.id == member.profile_id).first()
+                if user:
+                    user.soft_delete(updater_id=current_user.user_id)
+                    user.is_active = False
+        db.commit()
+        return success_response(message=f"Successfully archived {len(payload.ids)} members")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[bulk_archive_members] error: {str(e)}")
+        raise e
+
+
+@router.post("/bulk-restore", response_model=None)
+def bulk_restore_members(
+    payload: BulkRestoreRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Bulk restore multiple archived member accounts."""
+    logger.info(f"[bulk_restore_members] user={current_user.user_id} count={len(payload.ids)}")
+
+    try:
+        for member_id in payload.ids:
+            member = db.query(Member).filter(Member.id == member_id, Member.is_deleted == True).first()
+            if member:
+                member.is_deleted = False
+                member.deleted_at = None
+                member.deleted_by = None
+                user = db.query(User).join(Profile).filter(Profile.id == member.profile_id).first()
+                if user:
+                    user.is_deleted = False
+                    user.deleted_at = None
+                    user.deleted_by = None
+                    user.is_active = True
+        db.commit()
+        return success_response(message=f"Successfully restored {len(payload.ids)} members")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[bulk_restore_members] error: {str(e)}")
+        raise e
+
+
+@router.post("/bulk-assign-trainer", response_model=None)
+def bulk_assign_trainer(
+    payload: BulkAssignTrainerRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Bulk assign/re-assign a trainer to multiple members."""
+    logger.info(f"[bulk_assign_trainer] user={current_user.user_id} count={len(payload.member_ids)} trainer={payload.trainer_id}")
+
+    # Check trainer exists
+    trainer = db.query(Trainer).filter(Trainer.id == payload.trainer_id, Trainer.is_deleted == False).first()
+    if not trainer:
+        raise NotFoundException(message="Selected trainer not found")
+
+    try:
+        for m_id in payload.member_ids:
+            # Deactivate current assignments
+            db.execute(
+                trainer_members.update()
+                .where(trainer_members.c.member_id == m_id)
+                .values(is_active=False)
+            )
+
+            # Insert new active assignment
+            existing_link = db.execute(
+                trainer_members.select()
+                .where(trainer_members.c.member_id == m_id, trainer_members.c.trainer_id == payload.trainer_id)
+            ).first()
+
+            if existing_link:
+                db.execute(
+                    trainer_members.update()
+                    .where(trainer_members.c.member_id == m_id, trainer_members.c.trainer_id == payload.trainer_id)
+                    .values(is_active=True, assigned_at=datetime.now(timezone.utc))
+                )
+            else:
+                db.execute(
+                    trainer_members.insert().values(
+                        trainer_id=payload.trainer_id,
+                        member_id=m_id,
+                        is_active=True
+                    )
+                )
+        db.commit()
+        return success_response(message=f"Successfully assigned trainer to {len(payload.member_ids)} members")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[bulk_assign_trainer] error: {str(e)}")
+        raise e
+
+
+@router.post("/bulk-change-plan", response_model=None)
+def bulk_change_plan(
+    payload: BulkChangePlanRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Bulk subscribe multiple members to a new membership plan."""
+    logger.info(f"[bulk_change_plan] user={current_user.user_id} count={len(payload.member_ids)} plan={payload.plan_id}")
+
+    from app.models.plan import MembershipPlan
+    from datetime import timedelta
+
+    plan = db.query(MembershipPlan).filter(MembershipPlan.id == payload.plan_id, MembershipPlan.is_active == True).first()
+    if not plan:
+        raise NotFoundException(message="Selected pricing plan not found or inactive")
+
+    try:
+        today = date.today()
+        for m_id in payload.member_ids:
+            # Expire current active memberships
+            db.query(Membership).filter(
+                Membership.member_id == m_id,
+                Membership.status == SubscriptionStatus.ACTIVE
+            ).update({Membership.status: SubscriptionStatus.EXPIRED})
+
+            # Create new active membership
+            new_sub = Membership(
+                member_id=m_id,
+                plan_id=payload.plan_id,
+                start_date=today,
+                end_date=today + timedelta(days=plan.duration_days),
+                status=SubscriptionStatus.ACTIVE
+            )
+            db.add(new_sub)
+        db.commit()
+        return success_response(message=f"Successfully switched plans for {len(payload.member_ids)} members")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[bulk_change_plan] error: {str(e)}")
+        raise e
+
+
+@router.post("/bulk-activate", response_model=None)
+def bulk_activate_members(
+    payload: BulkActivateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Bulk activate multiple member credentials."""
+    logger.info(f"[bulk_activate_members] user={current_user.user_id} count={len(payload.ids)}")
+
+    try:
+        updated = 0
+        for m_id in payload.ids:
+            member = db.query(Member).filter(Member.id == m_id).first()
+            if member:
+                user = db.query(User).join(Profile).filter(Profile.id == member.profile_id).first()
+                if user and not user.is_active:
+                    user.is_active = True
+                    updated += 1
+        db.commit()
+        return success_response(message=f"Successfully activated {updated} member accounts")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[bulk_activate_members] error: {str(e)}")
+        raise e
+
+
+@router.post("/bulk-deactivate", response_model=None)
+def bulk_deactivate_members(
+    payload: BulkDeactivateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Bulk deactivate multiple member credentials."""
+    logger.info(f"[bulk_deactivate_members] user={current_user.user_id} count={len(payload.ids)}")
+
+    try:
+        updated = 0
+        for m_id in payload.ids:
+            member = db.query(Member).filter(Member.id == m_id).first()
+            if member:
+                user = db.query(User).join(Profile).filter(Profile.id == member.profile_id).first()
+                if user and user.is_active:
+                    user.is_active = False
+                    updated += 1
+        db.commit()
+        return success_response(message=f"Successfully deactivated {updated} member accounts")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[bulk_deactivate_members] error: {str(e)}")
         raise e

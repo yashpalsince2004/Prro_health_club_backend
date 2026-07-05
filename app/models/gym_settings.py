@@ -1,5 +1,7 @@
 from typing import Optional
+# pyrefly: ignore [missing-import]
 from sqlalchemy import String, Text
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.base import Base
 from app.database.mixins import UUIDMixin, AuditMixin
