@@ -250,7 +250,7 @@ def update_member(
     member_id: UUID,
     payload: MemberUpdate,
     db: Session = Depends(get_db),
-    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+    current_user: UserContext = Depends(get_current_user_context)
 ):
     """Update profile and notes for a member."""
     logger.info(f"[update_member] user={current_user.user_id} action=update target={member_id}")
@@ -265,6 +265,13 @@ def update_member(
 
     profile = member.profile
     user = db.query(User).filter(User.id == profile.user_id).first()
+
+    # Enforce role ownership and restricted fields
+    if current_user.role not in [UserRole.ADMIN, UserRole.RECEPTIONIST]:
+        if current_user.user_id != profile.user_id:
+            raise AuthorizationException(message="You do not have permission to update this member's details")
+        if payload.is_active is not None or payload.notes is not None or payload.biometric_device_id is not None:
+            raise AuthorizationException(message="Members cannot modify active status, administrative notes, or biometric IDs")
 
     # Verify biometric device PIN uniqueness
     if payload.biometric_device_id is not None:
