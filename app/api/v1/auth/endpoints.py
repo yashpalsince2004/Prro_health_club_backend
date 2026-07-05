@@ -1,6 +1,8 @@
+from datetime import datetime, timezone
 # pyrefly: ignore [missing-import]
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import NotFoundException, AuthenticationException
 from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel, Field
 from app.dependencies.auth import get_current_user_context, RoleChecker, UserContext
 from app.schemas.auth import (
     LoginRequest,
@@ -14,6 +16,10 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.services.auth import AuthService
 from app.utils.response import success_response
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -130,3 +136,27 @@ def get_admin_dashboard(
         message="Admin verification successful",
         data={"admin_user_id": str(current_admin.user_id)}
     )
+
+
+@router.post("/change-password", response_model=None)
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user_context)
+):
+    """Change logged-in user's password."""
+    from app.models.user import User
+    from app.core.security import verify_password, get_password_hash
+    
+    user = db.query(User).filter(User.id == current_user.user_id, User.is_deleted == False).first()
+    if not user:
+        raise NotFoundException(message="User not found")
+        
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise AuthenticationException(message="Incorrect current password")
+        
+    user.hashed_password = get_password_hash(payload.new_password)
+    user.last_password_changed_at = datetime.now(timezone.utc)
+    db.commit()
+    
+    return success_response(message="Password changed successfully")
