@@ -14,6 +14,9 @@ from app.api.v1.analytics.endpoints import router as analytics_router
 from app.api.v1.notifications.endpoints import router as notifications_router
 from app.api.v1.admin.cron import router as admin_cron_router
 
+from app.api.v1.receptionists.endpoints import router as receptionists_router
+from app.api.v1.leads.endpoints import router as leads_router
+
 api_router = APIRouter()
 
 # Register all v1 sub-routers
@@ -21,6 +24,8 @@ api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(members_router, prefix="/members", tags=["Members"])
 api_router.include_router(trainers_router, prefix="/trainers", tags=["Trainers"])
+api_router.include_router(receptionists_router, prefix="/receptionists", tags=["Receptionists"])
+api_router.include_router(leads_router, prefix="/leads", tags=["Leads"])
 api_router.include_router(memberships_router, prefix="/memberships", tags=["Memberships"])
 api_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
 api_router.include_router(attendance_router, prefix="/attendance", tags=["Attendance"])

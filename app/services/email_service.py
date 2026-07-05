@@ -9,9 +9,12 @@ Architecture:
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
+# pyrefly: ignore [missing-import]
 import resend
+# pyrefly: ignore [missing-import]
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
+# pyrefly: ignore [missing-import]
 from loguru import logger
 from app.core.config import settings
 

@@ -1,7 +1,5 @@
-"""
-Pydantic schemas for Trainer management.
-"""
-
+from datetime import date
+from decimal import Decimal
 from uuid import UUID
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
@@ -18,6 +16,8 @@ class TrainerCreate(BaseModel):
     experience_years: Optional[int] = Field(None, ge=0, description="Years of professional experience")
     certifications: Optional[List[str]] = Field(None, description="List of professional credentials")
     bio: Optional[str] = Field(None, description="Short biography of the trainer")
+    salary: Optional[Decimal] = Field(None, description="Monthly salary for the trainer")
+    joining_staff_date: date = Field(default_factory=date.today, description="Employment start date")
 
 
 class TrainerUpdate(BaseModel):
@@ -30,6 +30,8 @@ class TrainerUpdate(BaseModel):
     bio: Optional[str] = Field(None, description="Short biography of the trainer")
     is_available: Optional[bool] = Field(None, description="Flag indicating if accepting new members")
     is_active: Optional[bool] = Field(None, description="User active status flag")
+    salary: Optional[Decimal] = Field(None, description="Monthly salary for the trainer")
+    joining_staff_date: Optional[date] = Field(None, description="Employment start date")
 
 
 class TrainerResponse(BaseModel):

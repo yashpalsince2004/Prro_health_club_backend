@@ -3,10 +3,11 @@ SQLAlchemy profile model capturing personal details of users.
 """
 
 from datetime import date
+from decimal import Decimal
 from enum import Enum
 from typing import Optional, TYPE_CHECKING
 import sqlalchemy
-from sqlalchemy import String, Date, Text, Uuid, ForeignKey, Integer
+from sqlalchemy import String, Date, Text, Uuid, ForeignKey, Integer, DECIMAL
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.base import Base
 from app.database.mixins import UUIDMixin, AuditMixin
@@ -87,6 +88,21 @@ class Profile(Base, UUIDMixin, AuditMixin):
         index=True,
         nullable=True,
         comment="eSSL Biometric PIN mapping users to attendance device scans"
+    )
+    salary: Mapped[Optional[Decimal]] = mapped_column(
+        DECIMAL(10, 2),
+        nullable=True,
+        comment="Monthly salary for staff members (null for regular members)"
+    )
+    shift: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="Work shift for receptionists: morning/evening/full-day"
+    )
+    joining_staff_date: Mapped[Optional[date]] = mapped_column(
+        Date,
+        nullable=True,
+        comment="Staff employment start date (separate from member joining_date)"
     )
 
     # Relationships

@@ -102,7 +102,9 @@ def create_trainer(
             full_name=payload.full_name,
             phone=payload.phone,
             date_of_birth=None,
-            gender=None
+            gender=None,
+            salary=payload.salary,
+            joining_staff_date=payload.joining_staff_date
         )
         db.add(new_profile)
         db.flush()  # Generate profile ID
@@ -245,9 +247,13 @@ def update_trainer(
             profile.full_name = payload.full_name
         if payload.phone is not None:
             profile.phone = payload.phone
+        if payload.salary is not None:
+            profile.salary = payload.salary
+        if payload.joining_staff_date is not None:
+            profile.joining_staff_date = payload.joining_staff_date
 
         # Update trainer details
-        for field, value in payload.model_dump(exclude={"full_name", "phone", "is_active"}, exclude_unset=True).items():
+        for field, value in payload.model_dump(exclude={"full_name", "phone", "is_active", "salary", "joining_staff_date"}, exclude_unset=True).items():
             setattr(trainer, field, value)
 
         db.commit()

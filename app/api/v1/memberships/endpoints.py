@@ -360,3 +360,139 @@ def update_membership_status(
         db.rollback()
         logger.error(f"[update_membership_status] error updating status: {str(e)}")
         raise e
+
+
+class FreezeMembershipRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+class UpgradeMembershipRequest(BaseModel):
+    new_plan_id: UUID
+    notes: Optional[str] = None
+
+
+@router.post("/{membership_id}/freeze", response_model=None)
+def freeze_membership(
+    membership_id: UUID,
+    payload: FreezeMembershipRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Pause/freeze a membership subscription (Admin + Receptionist)."""
+    membership = db.query(Membership).options(joinedload(Membership.plan)).filter(
+        Membership.id == membership_id,
+        Membership.is_deleted == False
+    ).first()
+
+    if not membership:
+        raise NotFoundException(message="Membership not found")
+
+    try:
+        membership.status = SubscriptionStatus.PAUSED
+        if payload.notes:
+            membership.notes = f"{membership.notes or ''}\nFrozen: {payload.notes}".strip()
+        db.commit()
+        db.refresh(membership)
+        return success_response(
+            message="Membership paused/frozen successfully",
+            data=_map_membership_to_response(membership).model_dump()
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[freeze_membership] error pausing membership: {e}")
+        raise e
+
+
+@router.post("/{membership_id}/unfreeze", response_model=None)
+def unfreeze_membership(
+    membership_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Resume/unfreeze a paused membership subscription (Admin + Receptionist)."""
+    membership = db.query(Membership).options(joinedload(Membership.plan)).filter(
+        Membership.id == membership_id,
+        Membership.is_deleted == False
+    ).first()
+
+    if not membership:
+        raise NotFoundException(message="Membership not found")
+
+    try:
+        membership.status = SubscriptionStatus.ACTIVE
+        membership.notes = f"{membership.notes or ''}\nUnfrozen at {date.today()}".strip()
+        db.commit()
+        db.refresh(membership)
+        return success_response(
+            message="Membership resumed/unfrozen successfully",
+            data=_map_membership_to_response(membership).model_dump()
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[unfreeze_membership] error resuming membership: {e}")
+        raise e
+
+
+@router.post("/{membership_id}/upgrade", response_model=None)
+def upgrade_membership(
+    membership_id: UUID,
+    payload: UpgradeMembershipRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Upgrade current membership to a new plan immediately (Admin + Receptionist)."""
+    # 1. Fetch current membership
+    current_membership = db.query(Membership).filter(
+        Membership.id == membership_id,
+        Membership.is_deleted == False
+    ).first()
+
+    if not current_membership:
+        raise NotFoundException(message="Membership not found")
+
+    # 2. Fetch new plan
+    new_plan = db.query(MembershipPlan).filter(
+        MembershipPlan.id == payload.new_plan_id,
+        MembershipPlan.is_active == True
+    ).first()
+
+    if not new_plan:
+        raise NotFoundException(message="New membership plan not found or inactive")
+
+    try:
+        # 3. Cancel old membership
+        current_membership.status = SubscriptionStatus.CANCELLED
+        cancel_notes = f"Upgraded to plan {new_plan.name} on {date.today()}"
+        if payload.notes:
+            cancel_notes += f" — {payload.notes}"
+        current_membership.notes = f"{current_membership.notes or ''}\n{cancel_notes}".strip()
+
+        # 4. Create new membership starting today
+        today = date.today()
+        end_date = today + timedelta(days=new_plan.duration_days)
+
+        new_membership = Membership(
+            member_id=current_membership.member_id,
+            plan_id=new_plan.id,
+            start_date=today,
+            end_date=end_date,
+            status=SubscriptionStatus.ACTIVE,
+            discount_percent=0.0,
+            notes=f"Upgraded from previous membership {current_membership.id}"
+        )
+        db.add(new_membership)
+        db.commit()
+
+        # Load relations for mapping
+        m_with_relations = db.query(Membership).options(
+            joinedload(Membership.plan)
+        ).filter(Membership.id == new_membership.id).first()
+
+        return success_response(
+            message="Membership upgraded successfully",
+            data=_map_membership_to_response(m_with_relations).model_dump()
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[upgrade_membership] error upgrading membership: {e}")
+        raise e
