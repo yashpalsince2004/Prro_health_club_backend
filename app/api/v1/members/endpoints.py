@@ -766,6 +766,25 @@ def bulk_assign_trainer(
     if not trainer:
         raise NotFoundException(message="Selected trainer not found")
 
+    # Capacity Check
+    active_members_count = len([m for m in trainer.assigned_members if not m.is_deleted])
+    max_cap = trainer.max_members or 15
+    new_assignments_count = len(payload.member_ids)
+    
+    # Calculate net new assignments by checking who is already active under this trainer
+    already_assigned = db.query(trainer_members.c.member_id).filter(
+        trainer_members.c.trainer_id == payload.trainer_id,
+        trainer_members.c.member_id.in_(payload.member_ids),
+        trainer_members.c.is_active == True
+    ).all()
+    already_assigned_count = len(already_assigned)
+    net_new_assignments = new_assignments_count - already_assigned_count
+    
+    if active_members_count + net_new_assignments > max_cap:
+        raise ConflictException(
+            message=f"Cannot assign {new_assignments_count} members. Selected trainer has {active_members_count} active members and capacity limit is {max_cap}."
+        )
+
     try:
         for m_id in payload.member_ids:
             # Deactivate current assignments

@@ -34,15 +34,32 @@ class Trainer(Base, UUIDMixin, AuditMixin, SoftDeleteMixin):
         nullable=False,
         comment="Foreign key referencing the associated personal profile"
     )
+    employee_id: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        unique=True,
+        index=True,
+        nullable=True,
+        comment="Unique employee identifier"
+    )
     specialization: Mapped[Optional[str]] = mapped_column(
         String(255),
         nullable=True,
         comment="Trainer's specialization area (e.g. Strength, Yoga, Cardio)"
     )
+    specializations: Mapped[Optional[List[str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Multi-select list of specialization areas"
+    )
     experience_years: Mapped[Optional[int]] = mapped_column(
         Integer,
         nullable=True,
         comment="Number of years of professional fitness training experience"
+    )
+    qualification: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Professional qualifications"
     )
     certifications: Mapped[Optional[List[str]]] = mapped_column(
         JSON,
@@ -53,6 +70,34 @@ class Trainer(Base, UUIDMixin, AuditMixin, SoftDeleteMixin):
         Text,
         nullable=True,
         comment="Short biography or personal description of the trainer"
+    )
+    employment_type: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        default="Full Time",
+        nullable=True,
+        comment="Full Time, Part Time, or Contract"
+    )
+    salary_type: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        default="Monthly",
+        nullable=True,
+        comment="Monthly or Hourly"
+    )
+    max_members: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        default=15,
+        nullable=True,
+        comment="Maximum members allowed"
+    )
+    working_days: Mapped[Optional[List[str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Working days list"
+    )
+    working_hours: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Shift working hours"
     )
     is_available: Mapped[bool] = mapped_column(
         Boolean,
