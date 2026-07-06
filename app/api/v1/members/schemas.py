@@ -129,6 +129,7 @@ class ActiveMembershipSummary(BaseModel):
     end_date: date
     status: SubscriptionStatus
     days_remaining: int
+    auto_renew: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

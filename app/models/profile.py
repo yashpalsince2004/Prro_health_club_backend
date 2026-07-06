@@ -6,8 +6,11 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Optional, TYPE_CHECKING
+# pyrefly: ignore [missing-import]
 import sqlalchemy
+# pyrefly: ignore [missing-import]
 from sqlalchemy import String, Date, Text, Uuid, ForeignKey, Integer, DECIMAL
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.base import Base
 from app.database.mixins import UUIDMixin, AuditMixin

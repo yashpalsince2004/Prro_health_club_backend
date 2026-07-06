@@ -68,7 +68,8 @@ def _get_active_membership_summary(member: Member) -> Optional[ActiveMembershipS
                 start_date=m.start_date,
                 end_date=m.end_date,
                 status=m.status,
-                days_remaining=max(0, days_remaining)
+                days_remaining=max(0, days_remaining),
+                auto_renew=m.auto_renew
             )
     # 2. Fallback to upcoming active membership
     for m in member.memberships:
@@ -80,7 +81,8 @@ def _get_active_membership_summary(member: Member) -> Optional[ActiveMembershipS
                 start_date=m.start_date,
                 end_date=m.end_date,
                 status=m.status,
-                days_remaining=max(0, days_remaining)
+                days_remaining=max(0, days_remaining),
+                auto_renew=m.auto_renew
             )
     return None
 
@@ -338,6 +340,7 @@ def list_members(
     # 1. Apply search filter (Full Name, Email, Phone, or Member ID)
     if search:
         search_filter = f"%{search}%"
+        # pyrefly: ignore [missing-import]
         from sqlalchemy import cast, String
         query = query.filter(
             (Profile.full_name.ilike(search_filter)) |
