@@ -104,6 +104,32 @@ class Profile(Base, UUIDMixin, AuditMixin):
         nullable=True,
         comment="Staff employment start date (separate from member joining_date)"
     )
+    occupation: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Occupation or profession of the member"
+    )
+    height: Mapped[Optional[Decimal]] = mapped_column(
+        DECIMAL(5, 2),
+        nullable=True,
+        comment="Height of the member in cm"
+    )
+    weight: Mapped[Optional[Decimal]] = mapped_column(
+        DECIMAL(5, 2),
+        nullable=True,
+        comment="Weight of the member in kg"
+    )
+    medical_notes: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Medical conditions or health notes"
+    )
+    emergency_relation: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Relationship of the emergency contact to the member"
+    )
+
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="profile")

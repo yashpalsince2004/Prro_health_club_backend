@@ -5,9 +5,9 @@ FastAPI route handlers for Membership subscriptions.
 import math
 from typing import Optional
 from uuid import UUID
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 from decimal import Decimal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from loguru import logger
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
@@ -31,6 +31,17 @@ from app.api.v1.memberships.schemas import (
 router = APIRouter()
 
 
+def get_today_date() -> date:
+    """Helper to get current local date in the gym's configured timezone."""
+    try:
+        from app.core.config import settings
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(settings.TIMEZONE)
+        return datetime.now(tz).date()
+    except Exception:
+        return date.today()
+
+
 def _map_membership_to_response(m: Membership) -> MembershipResponse:
     """Helper to map a Membership db model to MembershipResponse schema."""
     plan_db = m.plan
@@ -42,7 +53,7 @@ def _map_membership_to_response(m: Membership) -> MembershipResponse:
         currency=plan_db.currency
     )
 
-    today = date.today()
+    today = get_today_date()
     days_remaining = (m.end_date - today).days
 
     # Compute effective price
@@ -84,7 +95,7 @@ def create_membership(
         raise NotFoundException(message="Membership plan not found or inactive")
 
     # Check for active subscription overlap of the same plan
-    today = date.today()
+    today = get_today_date()
     overlapping = db.query(Membership).filter(
         Membership.member_id == payload.member_id,
         Membership.plan_id == payload.plan_id,
@@ -146,7 +157,7 @@ def get_my_active_membership(
     if not member:
         raise NotFoundException(message="Member record not found")
         
-    today = date.today()
+    today = get_today_date()
     membership = db.query(Membership).options(
         joinedload(Membership.plan)
     ).filter(
@@ -172,7 +183,7 @@ def list_expiring_memberships(
     """Retrieve all active subscriptions expiring within the next 7 days (Receptionist alert widget)."""
     logger.info(f"[list_expiring_memberships] user={current_user.user_id}")
 
-    today = date.today()
+    today = get_today_date()
     next_week = today + timedelta(days=7)
 
     memberships = db.query(Membership).options(
@@ -215,7 +226,7 @@ def list_memberships(
 
     # Filter by expiring days
     if expiring_in_days is not None:
-        today = date.today()
+        today = get_today_date()
         future_limit = today + timedelta(days=expiring_in_days)
         query = query.filter(
             Membership.status == SubscriptionStatus.ACTIVE,
@@ -224,7 +235,7 @@ def list_memberships(
         )
 
     total = query.count()
-    memberships = query.order_by(Membership.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    memberships = query.order_by(Membership.start_date.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
     mapped_list = [_map_membership_to_response(m).model_dump() for m in memberships]
     return paginated_response(
@@ -289,7 +300,7 @@ def renew_membership(
 
     try:
         # Determine new start date
-        today = date.today()
+        today = get_today_date()
         start_date = today
         if payload.start_from_expiry and current_membership.end_date >= today:
             start_date = current_membership.end_date + timedelta(days=1)
@@ -421,7 +432,7 @@ def unfreeze_membership(
 
     try:
         membership.status = SubscriptionStatus.ACTIVE
-        membership.notes = f"{membership.notes or ''}\nUnfrozen at {date.today()}".strip()
+        membership.notes = f"{membership.notes or ''}\nUnfrozen at {get_today_date()}".strip()
         db.commit()
         db.refresh(membership)
         return success_response(
@@ -463,13 +474,13 @@ def upgrade_membership(
     try:
         # 3. Cancel old membership
         current_membership.status = SubscriptionStatus.CANCELLED
-        cancel_notes = f"Upgraded to plan {new_plan.name} on {date.today()}"
+        cancel_notes = f"Upgraded to plan {new_plan.name} on {get_today_date()}"
         if payload.notes:
             cancel_notes += f" — {payload.notes}"
         current_membership.notes = f"{current_membership.notes or ''}\n{cancel_notes}".strip()
 
         # 4. Create new membership starting today
-        today = date.today()
+        today = get_today_date()
         end_date = today + timedelta(days=new_plan.duration_days)
 
         new_membership = Membership(
@@ -497,3 +508,43 @@ def upgrade_membership(
         db.rollback()
         logger.error(f"[upgrade_membership] error upgrading membership: {e}")
         raise e
+
+
+class ExtendMembershipRequest(BaseModel):
+    extend_days: int = Field(..., gt=0, description="Number of days to extend the membership by")
+    notes: Optional[str] = None
+
+
+@router.post("/{membership_id}/extend", response_model=None)
+def extend_membership(
+    membership_id: UUID,
+    payload: ExtendMembershipRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
+):
+    """Extend the expiration date of an existing active membership subscription."""
+    membership = db.query(Membership).options(joinedload(Membership.plan)).filter(
+        Membership.id == membership_id,
+        Membership.is_deleted == False
+    ).first()
+
+    if not membership:
+        raise NotFoundException(message="Membership not found")
+
+    try:
+        membership.end_date = membership.end_date + timedelta(days=payload.extend_days)
+        extend_notes = f"Extended by {payload.extend_days} days."
+        if payload.notes:
+            extend_notes += f" — {payload.notes}"
+        membership.notes = f"{membership.notes or ''}\n{extend_notes}".strip()
+        db.commit()
+        db.refresh(membership)
+        return success_response(
+            message="Membership extended successfully",
+            data=_map_membership_to_response(membership).model_dump()
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[extend_membership] error extending membership: {e}")
+        raise e
+

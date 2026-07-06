@@ -438,18 +438,18 @@ def get_membership_report(
 
     # 5. Timeline acquisition trend (PostgreSQL date_trunc)
     timeline_results = db.query(
-        func.date_trunc(group_by, Membership.created_at).label("period"),
+        func.date_trunc(group_by, Membership.start_date).label("period"),
         func.count(Membership.id).label("total_new"),
         func.count(Membership.id).filter(Membership.status == SubscriptionStatus.EXPIRED).label("expired_cnt"),
         func.count(Membership.id).filter(Membership.status == SubscriptionStatus.CANCELLED).label("cancelled_cnt")
     ).filter(
-        Membership.created_at >= from_dt,
-        Membership.created_at <= to_dt,
+        Membership.start_date >= from_dt,
+        Membership.start_date <= to_dt,
         Membership.is_deleted == False
     ).group_by(
-        func.date_trunc(group_by, Membership.created_at)
+        func.date_trunc(group_by, Membership.start_date)
     ).order_by(
-        func.date_trunc(group_by, Membership.created_at).asc()
+        func.date_trunc(group_by, Membership.start_date).asc()
     ).all()
 
     timeline = []

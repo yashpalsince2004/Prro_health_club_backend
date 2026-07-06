@@ -44,12 +44,36 @@ from app.models.association import trainer_members
 router = APIRouter()
 
 
+def get_today_date() -> date:
+    """Helper to get current local date in the gym's configured timezone."""
+    try:
+        from app.core.config import settings
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(settings.TIMEZONE)
+        return datetime.now(tz).date()
+    except Exception:
+        return date.today()
+
+
 def _get_active_membership_summary(member: Member) -> Optional[ActiveMembershipSummary]:
-    """Helper to find the active membership for a member and calculate remaining days."""
-    today = date.today()
+    """Helper to find the active or upcoming membership for a member and calculate remaining days."""
+    today = get_today_date()
+    # 1. Look for currently running active membership
     for m in member.memberships:
         if m.status == SubscriptionStatus.ACTIVE and m.start_date <= today <= m.end_date:
             days_remaining = (m.end_date - today).days
+            return ActiveMembershipSummary(
+                id=m.id,
+                plan_name=m.plan.name,
+                start_date=m.start_date,
+                end_date=m.end_date,
+                status=m.status,
+                days_remaining=max(0, days_remaining)
+            )
+    # 2. Fallback to upcoming active membership
+    for m in member.memberships:
+        if m.status == SubscriptionStatus.ACTIVE and today < m.start_date:
+            days_remaining = (m.end_date - m.start_date).days
             return ActiveMembershipSummary(
                 id=m.id,
                 plan_name=m.plan.name,
@@ -75,7 +99,12 @@ def _map_member_to_response(member: Member, db: Session) -> MemberResponse:
         emergency_contact_name=profile_db.emergency_contact_name,
         emergency_contact_phone=profile_db.emergency_contact_phone,
         biometric_device_id=profile_db.biometric_device_id,
-        email=profile_db.user.email if profile_db.user else None
+        email=profile_db.user.email if profile_db.user else None,
+        occupation=profile_db.occupation,
+        height=profile_db.height,
+        weight=profile_db.weight,
+        medical_notes=profile_db.medical_notes,
+        emergency_relation=profile_db.emergency_relation
     )
 
     # Fetch last visit
@@ -121,12 +150,26 @@ def create_member(
     current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN, UserRole.RECEPTIONIST]))
 ):
     """Create a User, Profile, and Member profile in a single transaction."""
+    # ===== TEMPORARY INSTRUMENTATION START =====
+    logger.info(f"[TRACE-1] payload.model_dump() = {payload.model_dump()}")
+    logger.info(f"[TRACE-2] payload.plan_id repr={repr(payload.plan_id)} type={type(payload.plan_id).__name__}")
+    logger.info(f"[TRACE-3] payload.trainer_id repr={repr(payload.trainer_id)} type={type(payload.trainer_id).__name__}")
     logger.info(f"[create_member] user={current_user.user_id} action=create email={payload.email}")
 
     # Check if email is already taken
-    existing_user = db.query(User).filter(User.email == payload.email.lower()).first()
-    if existing_user:
-        raise ConflictException(message=f"Email '{payload.email}' is already registered")
+    email_exists = db.query(User).filter(User.email == payload.email.lower()).first() is not None
+
+    # Check if phone is already taken
+    phone_exists = False
+    if payload.phone:
+        phone_exists = db.query(Profile).filter(Profile.phone == payload.phone).first() is not None
+
+    if email_exists and phone_exists:
+        raise ConflictException(message="An account with this email and phone number already exists.")
+    elif email_exists:
+        raise ConflictException(message="Email already registered.")
+    elif phone_exists:
+        raise ConflictException(message="Phone number already registered.")
 
     try:
         # Create user
@@ -138,6 +181,7 @@ def create_member(
         )
         db.add(new_user)
         db.flush()  # Generate user ID
+        logger.info(f"[TRACE-4] new_user.id={new_user.id}")
 
         # Create profile
         new_profile = Profile(
@@ -148,10 +192,16 @@ def create_member(
             gender=payload.gender,
             address=payload.address,
             emergency_contact_name=payload.emergency_contact_name,
-            emergency_contact_phone=payload.emergency_contact_phone
+            emergency_contact_phone=payload.emergency_contact_phone,
+            emergency_relation=payload.emergency_relation,
+            medical_notes=payload.medical_notes,
+            occupation=payload.occupation,
+            height=payload.height,
+            weight=payload.weight
         )
         db.add(new_profile)
         db.flush()  # Generate profile ID
+        logger.info(f"[TRACE-5] new_profile.id={new_profile.id}")
 
         # Create member
         new_member = Member(
@@ -161,12 +211,15 @@ def create_member(
         )
         db.add(new_member)
         db.flush()
+        logger.info(f"[TRACE-6] new_member.id={new_member.id}")
 
         # Handle Membership Assignment
+        logger.info(f"[TRACE-7] entering plan branch: truthiness of payload.plan_id = {bool(payload.plan_id)}")
         if payload.plan_id:
             from app.models.plan import MembershipPlan
             from datetime import timedelta
             plan = db.query(MembershipPlan).filter(MembershipPlan.id == payload.plan_id, MembershipPlan.is_active == True).first()
+            logger.info(f"[TRACE-8] plan lookup result = {plan!r} (id={payload.plan_id})")
             if plan:
                 new_sub = Membership(
                     member_id=new_member.id,
@@ -175,11 +228,19 @@ def create_member(
                     end_date=payload.joining_date + timedelta(days=plan.duration_days),
                     status=SubscriptionStatus.ACTIVE
                 )
+                logger.info(f"[TRACE-9] new_sub Membership object CREATED: id={new_sub.id} member_id={new_sub.member_id} plan_id={new_sub.plan_id} start={new_sub.start_date} end={new_sub.end_date} status={new_sub.status}")
                 db.add(new_sub)
+                logger.info(f"[TRACE-10] session.add(new_sub) EXECUTED; session.new contains membership? {new_sub in db.new}")
+            else:
+                logger.info(f"[TRACE-9] NO plan resolved — skipping Membership creation")
+        else:
+            logger.info(f"[TRACE-8] payload.plan_id falsy — skipping plan branch entirely")
 
         # Handle Trainer Assignment
+        logger.info(f"[TRACE-11] entering trainer branch: truthiness of payload.trainer_id = {bool(payload.trainer_id)}")
         if payload.trainer_id:
             trainer = db.query(Trainer).filter(Trainer.id == payload.trainer_id, Trainer.is_deleted == False).first()
+            logger.info(f"[TRACE-12] trainer lookup result = {trainer!r} (id={payload.trainer_id})")
             if trainer:
                 db.execute(
                     trainer_members.insert().values(
@@ -188,8 +249,18 @@ def create_member(
                         is_active=True
                     )
                 )
+                logger.info(f"[TRACE-13] trainer_members row INSERTED trainer_id={payload.trainer_id} member_id={new_member.id}")
+            else:
+                logger.info(f"[TRACE-13] NO trainer resolved — skipping trainer_members insert")
+        else:
+            logger.info(f"[TRACE-12] payload.trainer_id falsy — skipping trainer branch entirely")
+
+        # Membership row existence check immediately before commit
+        pre_commit_membership = db.query(Membership).filter(Membership.member_id == new_member.id).all()
+        logger.info(f"[TRACE-14] BEFORE COMMIT — Membership rows for member_id={new_member.id}: count={len(pre_commit_membership)} rows={[(m.id, m.plan_id, m.status) for m in pre_commit_membership]}")
 
         db.commit()
+        logger.info(f"[TRACE-15] db.commit() RETURNED OK")
 
         # Welcome email side-effect
         try:
@@ -207,8 +278,22 @@ def create_member(
             joinedload(Member.profile),
             joinedload(Member.memberships).joinedload(Membership.plan)
         ).filter(Member.id == new_member.id).first()
+        logger.info(f"[TRACE-16] member_with_relations.id={member_with_relations.id if member_with_relations else None}")
+        logger.info(f"[TRACE-17] member_with_relations.memberships count={len(member_with_relations.memberships) if member_with_relations else 'N/A'}")
+        if member_with_relations:
+            for m in member_with_relations.memberships:
+                logger.info(f"[TRACE-18]   membership: id={m.id} plan_id={m.plan_id} status={m.status} start={m.start_date} end={m.end_date} plan_name={m.plan.name if m.plan else None}")
 
         res_data = _map_member_to_response(member_with_relations, db)
+        logger.info(f"[TRACE-19] _map_member_to_response active_membership = {res_data.active_membership!r}")
+        if res_data.active_membership is None:
+            # Diagnose WHY active_membership is None
+            today = get_today_date()
+            logger.info(f"[TRACE-20] active_membership=None diagnosis: today={today}, total_memberships_on_member={len(member_with_relations.memberships)}")
+            for m in member_with_relations.memberships:
+                in_window = m.start_date <= today <= m.end_date
+                status_match = m.status == SubscriptionStatus.ACTIVE
+                logger.info(f"[TRACE-21]   membership id={m.id}: status==ACTIVE? {status_match} (actual={m.status}); in_date_window? {in_window} (start={m.start_date} end={m.end_date})")
         return success_response(message="Member created successfully", data=res_data.model_dump(), status_code=201)
 
     except Exception as e:
@@ -262,7 +347,7 @@ def list_members(
         )
 
     # 2. Apply membership status filter
-    today = date.today()
+    today = get_today_date()
     if status == "active":
         query = query.filter(
             Member.memberships.any(
@@ -334,7 +419,7 @@ def get_member_stats(
 
     total = db.query(Member).filter(Member.is_deleted == False).count()
     
-    today = date.today()
+    today = get_today_date()
     active = db.query(Member).filter(
         Member.is_deleted == False,
         Member.memberships.any(
@@ -421,8 +506,27 @@ def update_member(
     if current_user.role not in [UserRole.ADMIN, UserRole.RECEPTIONIST]:
         if current_user.user_id != profile.user_id:
             raise AuthorizationException(message="You do not have permission to update this member's details")
-        if payload.is_active is not None or payload.notes is not None or payload.biometric_device_id is not None:
-            raise AuthorizationException(message="Members cannot modify active status, administrative notes, or biometric IDs")
+        if payload.is_active is not None or payload.notes is not None or payload.biometric_device_id is not None or payload.email is not None:
+            raise AuthorizationException(message="Members cannot modify active status, administrative notes, biometric IDs, or email")
+
+    # Verify email/phone uniqueness if updated
+    email_exists = False
+    if payload.email is not None and user:
+        email_exists = db.query(User).filter(User.email == payload.email.lower(), User.id != user.id).first() is not None
+
+    phone_exists = False
+    if payload.phone is not None:
+        phone_exists = db.query(Profile).filter(Profile.phone == payload.phone, Profile.id != profile.id).first() is not None
+
+    if email_exists and phone_exists:
+        raise ConflictException(message="An account with this email and phone number already exists.")
+    elif email_exists:
+        raise ConflictException(message="Email already registered.")
+    elif phone_exists:
+        raise ConflictException(message="Phone number already registered.")
+
+    if payload.email is not None and user:
+        user.email = payload.email.lower()
 
     # Verify biometric device PIN uniqueness
     if payload.biometric_device_id is not None:
@@ -439,7 +543,7 @@ def update_member(
             user.is_active = payload.is_active
 
         # Update profile details
-        for field, value in payload.model_dump(exclude={"notes", "is_active", "plan_id", "trainer_id"}, exclude_unset=True).items():
+        for field, value in payload.model_dump(exclude={"notes", "is_active", "plan_id", "trainer_id", "email"}, exclude_unset=True).items():
             setattr(profile, field, value)
 
         # Update member notes if provided
@@ -459,7 +563,7 @@ def update_member(
                 ).update({Membership.status: SubscriptionStatus.EXPIRED})
                 
                 # Assign new active membership
-                today = date.today()
+                today = get_today_date()
                 new_sub = Membership(
                     member_id=member.id,
                     plan_id=payload.plan_id,
@@ -713,7 +817,7 @@ def bulk_change_plan(
         raise NotFoundException(message="Selected pricing plan not found or inactive")
 
     try:
-        today = date.today()
+        today = get_today_date()
         for m_id in payload.member_ids:
             # Expire current active memberships
             db.query(Membership).filter(

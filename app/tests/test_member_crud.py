@@ -105,7 +105,7 @@ def test_member_crud_flow():
         "email": member_email,
         "password": "Password123",
         "full_name": "E2E Test Member",
-        "phone": "9999955555",
+        "phone": f"99999{uuid4().hex[:5]}",
         "joining_date": str(date.today()),
         "plan_id": str(plan.id),
         "trainer_id": str(trainer.id),
@@ -182,6 +182,82 @@ def test_member_crud_flow():
     res = client.post("/api/v1/members/bulk-restore", json={"ids": [member_id]}, headers=headers)
     assert res.status_code == 200, f"Failed bulk restore: {res.text}"
     print("✓ Bulk restore succeeded.")
+
+    # 12. DUPLICATE MEMBER VALIDATION TESTS
+    print("\n[TEST] 10. Testing duplicate validation constraints...")
+    
+    test_email = f"duplicate_check_{uuid4().hex[:6]}@gmail.com"
+    test_phone = f"88888{uuid4().hex[:5]}"
+    payload_a = {
+        "email": test_email,
+        "password": "Password123",
+        "full_name": "Unique Name A",
+        "phone": test_phone,
+        "joining_date": str(date.today()),
+        "plan_id": str(plan.id),
+        "trainer_id": str(trainer.id)
+    }
+    res = client.post("/api/v1/members/", json=payload_a, headers=headers)
+    assert res.status_code == 201
+
+    # Case 1: Same Name, DIFFERENT Email, DIFFERENT Phone -> Should Succeed (Name is NOT unique)
+    payload_same_name = {
+        "email": f"diff_email_{uuid4().hex[:6]}@gmail.com",
+        "password": "Password123",
+        "full_name": "Unique Name A",
+        "phone": f"77777{uuid4().hex[:5]}",
+        "joining_date": str(date.today()),
+        "plan_id": str(plan.id),
+        "trainer_id": str(trainer.id)
+    }
+    res = client.post("/api/v1/members/", json=payload_same_name, headers=headers)
+    assert res.status_code == 201
+    print("✓ Verification: Name is not unique (different email/phone created successfully)")
+
+    # Case 2: Same Email, DIFFERENT Phone -> Should Fail with "Email already registered."
+    payload_same_email = {
+        "email": test_email,
+        "password": "Password123",
+        "full_name": "Different Name",
+        "phone": f"66666{uuid4().hex[:5]}",
+        "joining_date": str(date.today()),
+        "plan_id": str(plan.id),
+        "trainer_id": str(trainer.id)
+    }
+    res = client.post("/api/v1/members/", json=payload_same_email, headers=headers)
+    assert res.status_code == 409
+    assert res.json()["error"]["message"] == "Email already registered."
+    print("✓ Verification: Email uniqueness check returned 'Email already registered.'")
+
+    # Case 3: DIFFERENT Email, Same Phone -> Should Fail with "Phone number already registered."
+    payload_same_phone = {
+        "email": f"diff_email2_{uuid4().hex[:6]}@gmail.com",
+        "password": "Password123",
+        "full_name": "Different Name",
+        "phone": test_phone,
+        "joining_date": str(date.today()),
+        "plan_id": str(plan.id),
+        "trainer_id": str(trainer.id)
+    }
+    res = client.post("/api/v1/members/", json=payload_same_phone, headers=headers)
+    assert res.status_code == 409
+    assert res.json()["error"]["message"] == "Phone number already registered."
+    print("✓ Verification: Phone uniqueness check returned 'Phone number already registered.'")
+
+    # Case 4: Same Email, Same Phone -> Should Fail with "An account with this email and phone number already exists."
+    payload_both_dup = {
+        "email": test_email,
+        "password": "Password123",
+        "full_name": "Different Name",
+        "phone": test_phone,
+        "joining_date": str(date.today()),
+        "plan_id": str(plan.id),
+        "trainer_id": str(trainer.id)
+    }
+    res = client.post("/api/v1/members/", json=payload_both_dup, headers=headers)
+    assert res.status_code == 409
+    assert res.json()["error"]["message"] == "An account with this email and phone number already exists."
+    print("✓ Verification: Combined duplicate email/phone check returned correct details.")
 
     print("\n==========================================")
     print("ALL END-TO-END FLOW TESTS COMPLETED")

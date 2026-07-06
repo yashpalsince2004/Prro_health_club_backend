@@ -5,6 +5,7 @@ Pydantic schemas for Member management.
 from datetime import date
 from uuid import UUID
 from typing import Optional, List
+from decimal import Decimal
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 # pyrefly: ignore [missing-import]
@@ -27,6 +28,11 @@ class MemberCreate(BaseModel):
     address: Optional[str] = Field(None, description="Residential address")
     emergency_contact_name: Optional[str] = Field(None, description="Emergency contact name")
     emergency_contact_phone: Optional[str] = Field(None, description="Emergency contact phone number")
+    emergency_relation: Optional[str] = Field(None, description="Relationship of emergency contact")
+    medical_notes: Optional[str] = Field(None, description="Injuries or health conditions")
+    occupation: Optional[str] = Field(None, description="Profession or work")
+    height: Optional[Decimal] = Field(None, description="Height in cm")
+    weight: Optional[Decimal] = Field(None, description="Weight in kg")
 
     # Member details
     joining_date: date = Field(default_factory=date.today, description="Gym joining date")
@@ -46,21 +52,51 @@ class MemberCreate(BaseModel):
             raise PydanticCustomError("password_strength", "Password must contain at least one numeric digit")
         return v
 
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_dob(cls, v: Optional[date]) -> Optional[date]:
+        """Validate date of birth is in the past."""
+        if v and v >= date.today():
+            raise PydanticCustomError("invalid_dob", "Date of birth must be in the past")
+        return v
+
+    @field_validator("joining_date")
+    @classmethod
+    def validate_joining_date(cls, v: date) -> date:
+        """Validate joining date is not in the future."""
+        if v > date.today():
+            raise PydanticCustomError("future_joining_date", "Joining date cannot be in the future")
+        return v
+
 
 class MemberUpdate(BaseModel):
     """Schema to update a member profile and status details."""
     full_name: Optional[str] = Field(None, min_length=1, description="Legal full name")
+    email: Optional[EmailStr] = Field(None, description="Email address for user login")
     phone: Optional[str] = Field(None, description="Contact phone number")
     date_of_birth: Optional[date] = Field(None, description="Date of birth")
     gender: Optional[Gender] = Field(None, description="Gender classification")
     address: Optional[str] = Field(None, description="Residential address")
     emergency_contact_name: Optional[str] = Field(None, description="Emergency contact name")
     emergency_contact_phone: Optional[str] = Field(None, description="Emergency contact phone number")
+    emergency_relation: Optional[str] = Field(None, description="Relationship of emergency contact")
+    medical_notes: Optional[str] = Field(None, description="Injuries or health conditions")
+    occupation: Optional[str] = Field(None, description="Profession or work")
+    height: Optional[Decimal] = Field(None, description="Height in cm")
+    weight: Optional[Decimal] = Field(None, description="Weight in kg")
     notes: Optional[str] = Field(None, description="Gym notes or constraints")
     biometric_device_id: Optional[int] = Field(None, description="Biometric terminal device PIN")
     is_active: Optional[bool] = Field(None, description="User active status flag")
     plan_id: Optional[UUID] = Field(None, description="Pricing plan template UUID")
     trainer_id: Optional[UUID] = Field(None, description="Assigned trainer UUID")
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_dob(cls, v: Optional[date]) -> Optional[date]:
+        """Validate date of birth is in the past."""
+        if v and v >= date.today():
+            raise PydanticCustomError("invalid_dob", "Date of birth must be in the past")
+        return v
 
 
 class ProfileResponse(BaseModel):
@@ -76,6 +112,11 @@ class ProfileResponse(BaseModel):
     emergency_contact_phone: Optional[str] = None
     biometric_device_id: Optional[int] = None
     email: Optional[str] = None
+    occupation: Optional[str] = None
+    height: Optional[Decimal] = None
+    weight: Optional[Decimal] = None
+    medical_notes: Optional[str] = None
+    emergency_relation: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
