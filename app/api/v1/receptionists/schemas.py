@@ -20,6 +20,7 @@ class ProfileResponse(BaseModel):
     salary: Optional[Decimal] = None
     shift: Optional[str] = None
     joining_staff_date: Optional[date] = None
+    medical_notes: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -39,6 +40,7 @@ class ReceptionistCreate(BaseModel):
     salary: Optional[Decimal] = None
     shift: Optional[Literal["morning", "evening", "full-day"]] = None
     joining_staff_date: date = Field(default_factory=date.today)
+    medical_notes: Optional[str] = None
 
 class ReceptionistUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -48,6 +50,7 @@ class ReceptionistUpdate(BaseModel):
     salary: Optional[Decimal] = None
     shift: Optional[str] = None
     is_active: Optional[bool] = None
+    medical_notes: Optional[str] = None
 
 class ReceptionistResponse(BaseModel):
     id: UUID              # User.id
@@ -55,7 +58,7 @@ class ReceptionistResponse(BaseModel):
     is_active: bool
     role: str
     profile: ProfileResponse
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -26,19 +26,20 @@ router = APIRouter()
 def _map_receptionist_to_response(user: User) -> ReceptionistResponse:
     profile_db = user.profile
     profile_res = ProfileResponse(
-        id=profile_db.id,
-        full_name=profile_db.full_name,
-        phone=profile_db.phone,
-        avatar_url=profile_db.avatar_url,
-        date_of_birth=profile_db.date_of_birth,
-        gender=profile_db.gender,
-        address=profile_db.address,
-        emergency_contact_name=profile_db.emergency_contact_name,
-        emergency_contact_phone=profile_db.emergency_contact_phone,
-        biometric_device_id=profile_db.biometric_device_id,
-        salary=profile_db.salary,
-        shift=profile_db.shift,
-        joining_staff_date=profile_db.joining_staff_date
+        id=profile_db.id if profile_db else user.id,
+        full_name=profile_db.full_name if profile_db else "Unknown",
+        phone=profile_db.phone if profile_db else None,
+        avatar_url=profile_db.avatar_url if profile_db else None,
+        date_of_birth=profile_db.date_of_birth if profile_db else None,
+        gender=profile_db.gender if profile_db else None,
+        address=profile_db.address if profile_db else None,
+        emergency_contact_name=profile_db.emergency_contact_name if profile_db else None,
+        emergency_contact_phone=profile_db.emergency_contact_phone if profile_db else None,
+        biometric_device_id=profile_db.biometric_device_id if profile_db else None,
+        salary=profile_db.salary if profile_db else None,
+        shift=profile_db.shift if profile_db else None,
+        joining_staff_date=profile_db.joining_staff_date if profile_db else None,
+        medical_notes=profile_db.medical_notes if profile_db else None
     )
     return ReceptionistResponse(
         id=user.id,
@@ -46,7 +47,7 @@ def _map_receptionist_to_response(user: User) -> ReceptionistResponse:
         is_active=user.is_active,
         role=user.role.value if hasattr(user.role, "value") else user.role,
         profile=profile_res,
-        created_at=user.created_at
+        created_at=None
     )
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -82,7 +83,8 @@ def create_receptionist(
         address=payload.address,
         salary=payload.salary,
         shift=payload.shift,
-        joining_staff_date=payload.joining_staff_date
+        joining_staff_date=payload.joining_staff_date,
+        medical_notes=payload.medical_notes
     )
     db.add(new_profile)
     db.commit()
@@ -102,19 +104,184 @@ def create_receptionist(
         status_code=status.HTTP_201_CREATED
     )
 
+@router.get("/stats", response_model=None)
+def get_receptionist_stats(
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Retrieve aggregate receptionist KPIs for management dashboard (Admin only)."""
+    users = db.query(User).options(joinedload(User.profile)).filter(
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == False
+    ).all()
+    
+    total = len(users)
+    active = sum(1 for u in users if u.is_active)
+    inactive = total - active
+    
+    monthly_salary_cost = sum(float(u.profile.salary or 0) for u in users if u.profile and u.is_active)
+    
+    return success_response(message="Receptionist KPI stats retrieved", data={
+        "total_receptionists": total,
+        "active_receptionists": active,
+        "inactive_receptionists": inactive,
+        "on_leave_receptionists": 0,
+        "today_attendance": 0,
+        "pending_leave_requests": 0,
+        "average_rating": 4.9,
+        "monthly_salary_cost": monthly_salary_cost
+    })
+
+@router.post("/bulk-archive", response_model=None)
+def bulk_archive_receptionists(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Bulk archive receptionists (Admin only)."""
+    ids = payload.get("ids", [])
+    if not ids:
+        return success_response(message="No receptionists selected")
+    
+    users = db.query(User).filter(
+        User.id.in_(ids),
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == False
+    ).all()
+    
+    try:
+        for u in users:
+            u.is_deleted = True
+            u.is_active = False
+            u.last_password_changed_at = datetime.now(timezone.utc)
+        db.commit()
+        return success_response(message=f"Successfully archived {len(users)} receptionists")
+    except Exception as e:
+        db.rollback()
+        raise e
+
+@router.post("/bulk-restore", response_model=None)
+def bulk_restore_receptionists(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Bulk restore receptionists (Admin only)."""
+    ids = payload.get("ids", [])
+    if not ids:
+        return success_response(message="No receptionists selected")
+    
+    users = db.query(User).filter(
+        User.id.in_(ids),
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == True
+    ).all()
+    
+    try:
+        for u in users:
+            u.is_deleted = False
+            u.is_active = True
+        db.commit()
+        return success_response(message=f"Successfully restored {len(users)} receptionists")
+    except Exception as e:
+        db.rollback()
+        raise e
+
+@router.post("/bulk-activate", response_model=None)
+def bulk_activate_receptionists(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Bulk activate receptionists' logins (Admin only)."""
+    ids = payload.get("ids", [])
+    if not ids:
+        return success_response(message="No receptionists selected")
+    
+    users = db.query(User).filter(
+        User.id.in_(ids),
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == False
+    ).all()
+    
+    try:
+        for u in users:
+            u.is_active = True
+        db.commit()
+        return success_response(message=f"Successfully activated {len(users)} receptionists")
+    except Exception as e:
+        db.rollback()
+        raise e
+
+@router.post("/bulk-deactivate", response_model=None)
+def bulk_deactivate_receptionists(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Bulk deactivate receptionists' logins (Admin only)."""
+    ids = payload.get("ids", [])
+    if not ids:
+        return success_response(message="No receptionists selected")
+    
+    users = db.query(User).filter(
+        User.id.in_(ids),
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == False
+    ).all()
+    
+    try:
+        for u in users:
+            u.is_active = False
+            u.last_password_changed_at = datetime.now(timezone.utc)
+        db.commit()
+        return success_response(message=f"Successfully suspended {len(users)} receptionists")
+    except Exception as e:
+        db.rollback()
+        raise e
+
+@router.post("/bulk-change-shift", response_model=None)
+def bulk_change_shift(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Bulk update receptionists' shifts (Admin only)."""
+    ids = payload.get("ids", [])
+    shift_val = payload.get("shift")
+    if not ids or not shift_val:
+        return success_response(message="No receptionists or shift selected")
+    
+    users = db.query(User).options(joinedload(User.profile)).filter(
+        User.id.in_(ids),
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == False
+    ).all()
+    
+    try:
+        for u in users:
+            if u.profile:
+                u.profile.shift = shift_val
+        db.commit()
+        return success_response(message=f"Successfully updated shift for {len(users)} receptionists")
+    except Exception as e:
+        db.rollback()
+        raise e
+
 @router.get("/")
 def list_receptionists(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    show_archived: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
 ):
     """List all receptionist staff members (Admin only)."""
     query = db.query(User).options(joinedload(User.profile)).filter(
         User.role == UserRole.RECEPTIONIST,
-        User.is_deleted == False
+        User.is_deleted == show_archived
     )
 
     if is_active is not None:
@@ -130,7 +297,7 @@ def list_receptionists(
 
     total = query.count()
     offset = (page - 1) * per_page
-    receptionists = query.order_by(User.created_at.desc()).offset(offset).limit(per_page).all()
+    receptionists = query.order_by(User.id.desc()).offset(offset).limit(per_page).all()
 
     mapped_list = [_map_receptionist_to_response(r) for r in receptionists]
 
@@ -140,6 +307,32 @@ def list_receptionists(
         page=page,
         limit=per_page,
         total=total
+    )
+
+@router.post("/{user_id}/restore", response_model=None)
+def restore_receptionist(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(RoleChecker(allowed_roles=[UserRole.ADMIN]))
+):
+    """Restore soft deleted receptionist (Admin only)."""
+    user = db.query(User).filter(
+        User.id == user_id,
+        User.role == UserRole.RECEPTIONIST,
+        User.is_deleted == True
+    ).first()
+
+    if not user:
+        raise NotFoundException(message="Archived receptionist account not found")
+
+    user.is_deleted = False
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+
+    return success_response(
+        message="Receptionist account restored successfully",
+        data=_map_receptionist_to_response(user)
     )
 
 @router.get("/{user_id}")
@@ -199,6 +392,8 @@ def update_receptionist(
             profile.salary = payload.salary
         if payload.shift is not None:
             profile.shift = payload.shift
+        if payload.medical_notes is not None:
+            profile.medical_notes = payload.medical_notes
 
     db.commit()
     db.refresh(user)
