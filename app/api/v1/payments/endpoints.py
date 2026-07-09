@@ -51,7 +51,8 @@ def _map_payment_to_response(p: Payment) -> PaymentResponse:
         transaction_reference=p.transaction_reference,
         payment_date=p.payment_date,
         notes=p.notes,
-        collected_by_name=collected_by_name
+        collected_by_name=collected_by_name,
+        billing_details=p.billing_details
     )
 
 
@@ -96,7 +97,8 @@ def record_payment(
             payment_date=payload.payment_date or datetime.now(timezone.utc),
             notes=payload.notes,
             collected_by=current_user.user_id,
-            receipt_number=receipt_number
+            receipt_number=receipt_number,
+            billing_details=payload.billing_details
         )
         db.add(new_payment)
         db.commit()

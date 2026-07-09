@@ -19,6 +19,7 @@ class PaymentCreate(BaseModel):
     transaction_reference: Optional[str] = Field(None, description="Transaction reference number")
     payment_date: Optional[datetime] = Field(None, description="Transaction timestamp (defaults to now)")
     notes: Optional[str] = Field(None, description="Any reception notes")
+    billing_details: Optional[dict] = Field(None, description="Detailed itemized breakdown JSON")
 
 
 class PaymentResponse(BaseModel):
@@ -35,6 +36,7 @@ class PaymentResponse(BaseModel):
     payment_date: datetime
     notes: Optional[str] = None
     collected_by_name: Optional[str] = None
+    billing_details: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 

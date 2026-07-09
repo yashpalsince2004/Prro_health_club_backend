@@ -66,6 +66,30 @@ class MembershipPlan(Base, UUIDMixin, AuditMixin, SoftDeleteMixin):
         nullable=False,
         comment="Order of appearance of the plan in listing pages"
     )
+    category: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        default="General",
+        comment="Category grouping for this membership plan"
+    )
+    admission_fee: Mapped[float] = mapped_column(
+        DECIMAL(10, 2),
+        default=0.00,
+        nullable=False,
+        comment="Admission fee for new memberships under this plan"
+    )
+    tax: Mapped[float] = mapped_column(
+        DECIMAL(5, 2),
+        default=0.00,
+        nullable=False,
+        comment="Applicable tax/GST percentage"
+    )
+    color: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        default="#FF6B00",
+        comment="Display color theme for this plan card in frontend"
+    )
 
     # Relationships
     memberships: Mapped[List["Membership"]] = relationship(

@@ -14,6 +14,9 @@ from app.models.workout import WorkoutPlan, WorkoutExercise
 from app.models.diet import DietPlan, DietItem, MealType
 from app.models.association import trainer_members
 from app.models.notification import Notification, NotificationType
+from app.models.pt_plan import PTPlan
+from app.models.locker_plan import LockerPlan
+from app.models.additional_service import AdditionalService
 
 __all__ = [
     "User",
@@ -36,4 +39,7 @@ __all__ = [
     "trainer_members",
     "Notification",
     "NotificationType",
+    "PTPlan",
+    "LockerPlan",
+    "AdditionalService",
 ]

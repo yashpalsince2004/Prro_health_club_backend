@@ -101,6 +101,11 @@ class Payment(Base, UUIDMixin, AuditMixin):
         nullable=True,
         comment="Receptionist comments about the invoice/payment"
     )
+    billing_details: Mapped[Optional[dict]] = mapped_column(
+        sqlalchemy.JSON,
+        nullable=True,
+        comment="JSON snapshot of detailed itemized invoice breakdown"
+    )
     collected_by: Mapped[Optional[sqlalchemy.UUID]] = mapped_column(
         Uuid,
         ForeignKey("users.id", ondelete="SET NULL"),

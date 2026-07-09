@@ -19,6 +19,9 @@ from app.api.v1.leads.endpoints import router as leads_router
 from app.api.v1.exercise_library.endpoints import router as exercise_library_router
 from app.api.v1.admin.reports import router as reports_router
 from app.api.v1.admin.settings import router as settings_router
+from app.api.v1.pt_plans.endpoints import router as pt_plans_router
+from app.api.v1.locker_plans.endpoints import router as locker_plans_router
+from app.api.v1.additional_services.endpoints import router as additional_services_router
 
 api_router = APIRouter()
 
@@ -42,3 +45,6 @@ api_router.include_router(diet_plans_router, prefix="/diet-plans", tags=["Diet P
 api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["Notifications"])
 api_router.include_router(admin_cron_router, prefix="/admin", tags=["Admin Cron"])
+api_router.include_router(pt_plans_router, prefix="/pt-plans", tags=["PT Packages"])
+api_router.include_router(locker_plans_router, prefix="/locker-plans", tags=["Locker Plans"])
+api_router.include_router(additional_services_router, prefix="/additional-services", tags=["Additional Services"])

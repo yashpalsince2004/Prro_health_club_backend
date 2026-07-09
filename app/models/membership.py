@@ -72,6 +72,11 @@ class Membership(Base, UUIDMixin, AuditMixin, SoftDeleteMixin):
         nullable=True,
         comment="Additional comments or context about the membership"
     )
+    billing_details: Mapped[Optional[dict]] = mapped_column(
+        sqlalchemy.JSON,
+        nullable=True,
+        comment="JSON snapshot of detailed itemized billing calculations"
+    )
 
     # Relationships
     member: Mapped["Member"] = relationship(back_populates="memberships")

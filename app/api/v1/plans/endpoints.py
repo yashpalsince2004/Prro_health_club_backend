@@ -60,7 +60,11 @@ def create_plan(
             price=float(payload.price),
             features=payload.features,
             is_active=payload.is_active,
-            display_order=payload.display_order
+            display_order=payload.display_order,
+            category=payload.category,
+            admission_fee=float(payload.admission_fee) if payload.admission_fee is not None else 0.0,
+            tax=float(payload.tax) if payload.tax is not None else 0.0,
+            color=payload.color
         )
         db.add(new_plan)
         db.commit()
@@ -76,6 +80,10 @@ def create_plan(
             features=new_plan.features,
             is_active=new_plan.is_active,
             display_order=new_plan.display_order,
+            category=new_plan.category,
+            admission_fee=Decimal(str(new_plan.admission_fee)),
+            tax=Decimal(str(new_plan.tax)),
+            color=new_plan.color,
             active_subscriber_count=0
         )
         return success_response(message="Membership plan created successfully", data=res_data.model_dump(), status_code=201)
@@ -126,6 +134,10 @@ def list_plans(
                 features=plan.features,
                 is_active=plan.is_active,
                 display_order=plan.display_order,
+                category=plan.category,
+                admission_fee=Decimal(str(plan.admission_fee or 0)),
+                tax=Decimal(str(plan.tax or 0)),
+                color=plan.color,
                 active_subscriber_count=active_count or 0
             ).model_dump()
         )
@@ -162,6 +174,10 @@ def get_plan(
         features=plan.features,
         is_active=plan.is_active,
         display_order=plan.display_order,
+        category=plan.category,
+        admission_fee=Decimal(str(plan.admission_fee or 0)),
+        tax=Decimal(str(plan.tax or 0)),
+        color=plan.color,
         active_subscriber_count=active_count
     )
     return success_response(message="Membership plan details retrieved", data=res_data.model_dump())
@@ -193,8 +209,8 @@ def update_plan(
 
     try:
         for field, value in payload.model_dump(exclude_unset=True).items():
-            if field == "price":
-                setattr(plan, field, float(value))
+            if field in ["price", "admission_fee", "tax"]:
+                setattr(plan, field, float(value) if value is not None else 0.0)
             else:
                 setattr(plan, field, value)
 
@@ -212,6 +228,10 @@ def update_plan(
             features=plan.features,
             is_active=plan.is_active,
             display_order=plan.display_order,
+            category=plan.category,
+            admission_fee=Decimal(str(plan.admission_fee or 0)),
+            tax=Decimal(str(plan.tax or 0)),
+            color=plan.color,
             active_subscriber_count=active_count
         )
         return success_response(message="Membership plan updated successfully", data=res_data.model_dump())
